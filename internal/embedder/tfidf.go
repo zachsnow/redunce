@@ -3,27 +3,11 @@ package embedder
 import (
 	"math"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/ZachSnow/redunce/internal/store"
 )
-
-// preprocessCode cleans code by removing empty lines and lines with only braces
-func preprocessCode(code string) string {
-	lines := strings.Split(code, "\n")
-	var cleaned []string
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		// Skip empty lines and lines containing only { or }
-		if trimmed == "" || trimmed == "{" || trimmed == "}" {
-			continue
-		}
-		cleaned = append(cleaned, line)
-	}
-
-	return strings.Join(cleaned, "\n")
-}
 
 // TFIDFEmbedder uses TF-IDF for local embeddings
 type TFIDFEmbedder struct {
@@ -93,14 +77,10 @@ func (e *TFIDFEmbedder) buildVocabulary(chunks []*store.Chunk) {
 		terms = append(terms, termFreq{term, freq})
 	}
 
-	// Simple bubble sort by frequency (descending)
-	for i := 0; i < len(terms)-1; i++ {
-		for j := i + 1; j < len(terms); j++ {
-			if terms[j].freq > terms[i].freq {
-				terms[i], terms[j] = terms[j], terms[i]
-			}
-		}
-	}
+	// Sort by frequency (descending)
+	sort.Slice(terms, func(i, j int) bool {
+		return terms[i].freq > terms[j].freq
+	})
 
 	// Take top vectorDim terms
 	limit := e.vectorDim

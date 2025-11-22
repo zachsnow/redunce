@@ -2,10 +2,28 @@ package cluster
 
 import (
 	"fmt"
+	"os"
 	"sort"
 
 	"github.com/ZachSnow/redunce/internal/store"
 )
+
+const (
+	// DefaultSimilarChunksLimit is the default maximum number of similar chunks to find per chunk
+	DefaultSimilarChunksLimit = 10
+)
+
+// getProgressInterval calculates an appropriate progress reporting interval
+func getProgressInterval(total int) int {
+	interval := total / 10
+	if interval > 100 {
+		return 100
+	}
+	if interval < 1 {
+		return 1
+	}
+	return interval
+}
 
 // Cluster represents a group of similar chunks
 type Cluster struct {
@@ -17,7 +35,7 @@ type Cluster struct {
 }
 
 // FindClusters finds clusters of similar chunks
-func FindClusters(db *store.Store, threshold float64) ([]*Cluster, error) {
+func FindClusters(db *store.Store, threshold float64, verbose bool) ([]*Cluster, error) {
 	// Delete existing clusters
 	if err := db.DeleteAllClusters(); err != nil {
 		return nil, fmt.Errorf("failed to delete existing clusters: %w", err)
@@ -37,22 +55,15 @@ func FindClusters(db *store.Store, threshold float64) ([]*Cluster, error) {
 	var clusters []*Cluster
 	totalChunks := len(chunks)
 	processed := 0
+	progressInterval := getProgressInterval(totalChunks)
 
 	// Process each chunk
 	for _, chunk := range chunks {
 		processed++
 
-		// Show progress every 10% or every 100 chunks, whichever is smaller
-		progressInterval := totalChunks / 10
-		if progressInterval > 100 {
-			progressInterval = 100
-		}
-		if progressInterval < 1 {
-			progressInterval = 1
-		}
-
-		if processed%progressInterval == 0 || processed == totalChunks {
-			fmt.Printf("  Processed %d/%d chunks, found %d clusters so far\n", processed, totalChunks, len(clusters))
+		// Show progress if verbose mode is enabled
+		if verbose && (processed%progressInterval == 0 || processed == totalChunks) {
+			fmt.Fprintf(os.Stderr, "  Processed %d/%d chunks, found %d clusters so far\n", processed, totalChunks, len(clusters))
 		}
 
 		// Check if chunk is already in a cluster
@@ -65,7 +76,7 @@ func FindClusters(db *store.Store, threshold float64) ([]*Cluster, error) {
 		}
 
 		// Find similar chunks
-		similarChunks, err := db.FindSimilarChunks(chunk.ID, 10)
+		similarChunks, err := db.FindSimilarChunks(chunk.ID, DefaultSimilarChunksLimit)
 		if err != nil {
 			return nil, fmt.Errorf("failed to find similar chunks: %w", err)
 		}

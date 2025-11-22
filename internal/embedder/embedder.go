@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/ZachSnow/redunce/internal/store"
 )
@@ -43,7 +45,9 @@ type openAIResponse struct {
 func NewOpenAIEmbedder(apiKey string) *OpenAIEmbedder {
 	return &OpenAIEmbedder{
 		apiKey: apiKey,
-		client: &http.Client{},
+		client: &http.Client{
+			Timeout: 30 * time.Second,
+		},
 	}
 }
 
@@ -112,4 +116,21 @@ func (e *OpenAIEmbedder) EmbedBatch(chunks []*store.Chunk) ([][]float64, error) 
 	}
 
 	return embeddings, nil
+}
+
+// preprocessCode cleans code by removing empty lines and lines with only braces
+func preprocessCode(code string) string {
+	lines := strings.Split(code, "\n")
+	var cleaned []string
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// Skip empty lines and lines containing only { or }
+		if trimmed == "" || trimmed == "{" || trimmed == "}" {
+			continue
+		}
+		cleaned = append(cleaned, line)
+	}
+
+	return strings.Join(cleaned, "\n")
 }

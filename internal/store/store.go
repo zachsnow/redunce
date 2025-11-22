@@ -41,6 +41,11 @@ func init() {
 		})
 }
 
+const (
+	// EmbeddingDimension is the dimension of embedding vectors (OpenAI text-embedding-3-small)
+	EmbeddingDimension = 1536
+)
+
 type Chunk struct {
 	ID         int64
 	Path       string
@@ -68,7 +73,7 @@ func NewStore(dbPath string, reset bool) (*Store, error) {
 	}
 
 	// Open database with extension loading enabled
-	db, err := sql.Open("sqlite3_with_extensions", dbPath+"?_foreign_keys=1")
+	db, err := sql.Open("sqlite3_with_extensions", dbPath+"?_foreign_keys=1&_journal_mode=WAL")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -126,7 +131,8 @@ func (s *Store) initSchema() error {
 	}
 
 	// Initialize vector search with sqlite-vector
-	_, err := s.db.Exec("SELECT vector_init('chunks', 'embedding', 'type=FLOAT32,dimension=1536,distance=COSINE')")
+	query := fmt.Sprintf("SELECT vector_init('chunks', 'embedding', 'type=FLOAT32,dimension=%d,distance=COSINE')", EmbeddingDimension)
+	_, err := s.db.Exec(query)
 	if err != nil {
 		return fmt.Errorf("failed to initialize vector search: %w", err)
 	}
@@ -294,38 +300,6 @@ func IsSubset(a, b *Chunk) bool {
 
 	// If either is contained in the other, it's a subset relationship
 	return aInB || bInA
-}
-
-// CosineSimilarity calculates the cosine similarity between two vectors
-func CosineSimilarity(a, b []float64) float64 {
-	if len(a) != len(b) {
-		return 0
-	}
-
-	var dotProduct, normA, normB float64
-	for i := range a {
-		dotProduct += a[i] * b[i]
-		normA += a[i] * a[i]
-		normB += b[i] * b[i]
-	}
-
-	if normA == 0 || normB == 0 {
-		return 0
-	}
-
-	return dotProduct / (sqrt(normA) * sqrt(normB))
-}
-
-func sqrt(x float64) float64 {
-	// Simple sqrt using the math package would be better, but this avoids import
-	if x == 0 {
-		return 0
-	}
-	z := x
-	for i := 0; i < 10; i++ {
-		z = (z + x/z) / 2
-	}
-	return z
 }
 
 // FindSimilarChunks finds chunks similar to the given chunk

@@ -14,6 +14,33 @@ import (
 	"github.com/ZachSnow/redunce/internal/store"
 )
 
+const (
+	// BatchSize is the number of chunks to process in one batch
+	BatchSize = 64
+)
+
+// Global verbose flag
+var verbose bool
+
+// logVerbose prints to stderr if verbose mode is enabled
+func logVerbose(format string, args ...interface{}) {
+	if verbose {
+		fmt.Fprintf(os.Stderr, format, args...)
+	}
+}
+
+// getProgressInterval calculates an appropriate progress reporting interval
+func getProgressInterval(total int) int {
+	interval := total / 10
+	if interval > 100 {
+		return 100
+	}
+	if interval < 1 {
+		return 1
+	}
+	return interval
+}
+
 type Config struct {
 	Threshold      float64
 	EmbedMethod    string
@@ -30,6 +57,7 @@ type Config struct {
 	PrintIgnore    bool
 	PrintFiles     bool
 	PrintChunks    bool
+	Verbose        bool
 }
 
 func main() {
@@ -51,13 +79,12 @@ func main() {
 	flag.BoolVar(&cfg.PrintIgnore, "print-ignore", false, "print resolved ignore patterns and exit")
 	flag.BoolVar(&cfg.PrintFiles, "print-files", false, "print scanned files and exit")
 	flag.BoolVar(&cfg.PrintChunks, "print-chunks", false, "print chunks and exit")
+	flag.BoolVar(&cfg.Verbose, "verbose", false, "enable verbose progress output")
 
 	flag.Parse()
 
 	// Get remaining arguments as files/directories
 	args := flag.Args()
-
-	// Handle --print-ignore flag
 	if cfg.PrintIgnore {
 		// Use current directory if no args provided
 		baseDir := "."
@@ -153,7 +180,21 @@ func main() {
 	}
 }
 
+func createFormatter(format string) (output.Formatter, error) {
+	switch format {
+	case "json":
+		return output.NewJSONFormatter(), nil
+	case "md":
+		return output.NewMarkdownFormatter(), nil
+	default:
+		return nil, fmt.Errorf("unknown format: %s", format)
+	}
+}
+
 func run(cfg Config, paths []string) error {
+	// Set global verbose flag
+	verbose = cfg.Verbose
+
 	// Initialize database
 	db, err := store.NewStore(cfg.DBPath, cfg.Reset)
 	if err != nil {
@@ -167,12 +208,12 @@ func run(cfg Config, paths []string) error {
 	}
 
 	// Scan files
-	fmt.Println("Scanning files...")
+	logVerbose("Scanning files...\n")
 	files, err := scanner.ScanPaths(paths)
 	if err != nil {
 		return fmt.Errorf("failed to scan paths: %w", err)
 	}
-	fmt.Printf("Found %d files\n", len(files))
+	logVerbose("Found %d files\n", len(files))
 
 	// Process files based on embed method
 	var totalChunks int
@@ -192,26 +233,21 @@ func run(cfg Config, paths []string) error {
 		return fmt.Errorf("unknown embed method: %s", cfg.EmbedMethod)
 	}
 
-	fmt.Printf("Total chunks: %d\n", totalChunks)
+	logVerbose("Total chunks: %d\n", totalChunks)
 
 	// Cluster similar chunks
-	fmt.Println("Clustering similar chunks...")
-	clusters, err := cluster.FindClusters(db, cfg.Threshold)
+	logVerbose("Clustering similar chunks...\n")
+	clusters, err := cluster.FindClusters(db, cfg.Threshold, cfg.Verbose)
 	if err != nil {
 		return fmt.Errorf("failed to cluster chunks: %w", err)
 	}
-	fmt.Printf("Found %d clusters\n", len(clusters))
+	logVerbose("Found %d clusters\n", len(clusters))
 
 	// Output results
-	fmt.Println("Generating output...")
-	var formatter output.Formatter
-	switch cfg.Format {
-	case "json":
-		formatter = output.NewJSONFormatter()
-	case "md":
-		formatter = output.NewMarkdownFormatter()
-	default:
-		return fmt.Errorf("unknown format: %s", cfg.Format)
+	logVerbose("Generating output...\n")
+	formatter, err := createFormatter(cfg.Format)
+	if err != nil {
+		return err
 	}
 
 	return formatter.Format(os.Stdout, clusters)
@@ -269,7 +305,7 @@ func handleQuery(cfg Config, db *store.Store) error {
 		}
 
 		fmt.Println("Building TF-IDF vocabulary...")
-		tfidf := embedder.NewTFIDFEmbedder(1536)
+		tfidf := embedder.NewTFIDFEmbedder(store.EmbeddingDimension)
 		tfidf.UpdateVocabulary([]*store.Chunk{}, existingChunks)
 
 		fmt.Println("Embedding query...")
@@ -285,20 +321,15 @@ func handleQuery(cfg Config, db *store.Store) error {
 	}
 
 	// Search for similar chunks
-	results, err := db.SearchSimilar(queryEmbedding, 10, cfg.Threshold)
+	results, err := db.SearchSimilar(queryEmbedding, cluster.DefaultSimilarChunksLimit, cfg.Threshold)
 	if err != nil {
 		return fmt.Errorf("failed to search: %w", err)
 	}
 
 	// Output results
-	var formatter output.Formatter
-	switch cfg.Format {
-	case "json":
-		formatter = output.NewJSONFormatter()
-	case "md":
-		formatter = output.NewMarkdownFormatter()
-	default:
-		return fmt.Errorf("unknown format: %s", cfg.Format)
+	formatter, err := createFormatter(cfg.Format)
+	if err != nil {
+		return err
 	}
 
 	// Convert results to clusters format for output
@@ -361,9 +392,8 @@ func processFilesStreaming(cfg Config, db *store.Store, files []string, emb embe
 		}
 
 		// Embed chunks in batches
-		batchSize := 64
-		for j := 0; j < len(chunks); j += batchSize {
-			end := j + batchSize
+		for j := 0; j < len(chunks); j += BatchSize {
+			end := j + BatchSize
 			if end > len(chunks) {
 				end = len(chunks)
 			}
@@ -450,7 +480,7 @@ func processFilesWithTFIDF(cfg Config, db *store.Store, files []string) (int, er
 
 	// Step 3: Build TF-IDF vocabulary from all chunks
 	fmt.Println("Step 3: Building TF-IDF vocabulary...")
-	tfidf := embedder.NewTFIDFEmbedder(1536) // Use same dim as OpenAI for consistency
+	tfidf := embedder.NewTFIDFEmbedder(store.EmbeddingDimension) // Use same dim as OpenAI for consistency
 
 	// Combine existing and new chunks for vocabulary
 	allChunks := append(existingChunks, allNewChunks...)
@@ -460,8 +490,21 @@ func processFilesWithTFIDF(cfg Config, db *store.Store, files []string) (int, er
 	// Step 4: If we have existing chunks, we need to re-embed them with new vocabulary
 	if len(existingChunks) > 0 {
 		fmt.Println("Step 4: Re-embedding existing chunks with updated vocabulary...")
-		for i := 0; i < len(existingChunks); i += 100 {
-			end := i + 100
+
+		// First, collect unique file paths and delete all existing chunks once
+		uniquePaths := make(map[string]bool)
+		for _, chunk := range existingChunks {
+			uniquePaths[chunk.Path] = true
+		}
+		for path := range uniquePaths {
+			if err := db.DeleteChunksForFile(path); err != nil {
+				return 0, fmt.Errorf("failed to delete existing chunks: %w", err)
+			}
+		}
+
+		// Re-embed existing chunks with new vocabulary
+		for i := 0; i < len(existingChunks); i += BatchSize {
+			end := i + BatchSize
 			if end > len(existingChunks) {
 				end = len(existingChunks)
 			}
@@ -472,13 +515,9 @@ func processFilesWithTFIDF(cfg Config, db *store.Store, files []string) (int, er
 				return 0, fmt.Errorf("failed to embed existing chunks: %w", err)
 			}
 
-			// Update embeddings in database
+			// Update embeddings in memory
 			for j, chunk := range batch {
 				chunk.Embedding = embeddings[j]
-				// Delete and re-insert to update embedding
-				if err := db.DeleteChunksForFile(chunk.Path); err != nil {
-					return 0, fmt.Errorf("failed to delete chunk: %w", err)
-				}
 			}
 		}
 
@@ -487,7 +526,7 @@ func processFilesWithTFIDF(cfg Config, db *store.Store, files []string) (int, er
 			if err := db.InsertChunk(chunk); err != nil {
 				return 0, fmt.Errorf("failed to re-insert chunk: %w", err)
 			}
-			if (i+1)%100 == 0 {
+			if (i+1)%BatchSize == 0 {
 				fmt.Printf("  Re-inserted %d/%d chunks\n", i+1, len(existingChunks))
 			}
 		}
@@ -503,8 +542,8 @@ func processFilesWithTFIDF(cfg Config, db *store.Store, files []string) (int, er
 	}
 
 	// Find chunks for each file and insert them
-	for i := 0; i < len(allNewChunks); i += 100 {
-		end := i + 100
+	for i := 0; i < len(allNewChunks); i += BatchSize {
+		end := i + BatchSize
 		if end > len(allNewChunks) {
 			end = len(allNewChunks)
 		}
@@ -529,16 +568,17 @@ func processFilesWithTFIDF(cfg Config, db *store.Store, files []string) (int, er
 }
 
 func printUsage() {
+	binName := filepath.Base(os.Args[0])
 	fmt.Println("REDUNCE - Find potentially redundant code")
 	fmt.Println()
 	fmt.Println("Usage:")
-	fmt.Println("  redunce [options] <file-or-directory...>")
+	fmt.Printf("  %s [options] <file-or-directory...>\n", binName)
 	fmt.Println()
 	fmt.Println("Options:")
 	flag.PrintDefaults()
 	fmt.Println()
 	fmt.Println("Examples:")
-	fmt.Println("  redunce ./src")
-	fmt.Println("  redunce --threshold 0.9 --format json ./")
-	fmt.Println("  redunce -q \"error handling\" --format md")
+	fmt.Printf("  %s ./src\n", binName)
+	fmt.Printf("  %s --threshold 0.9 --format json ./\n", binName)
+	fmt.Printf("  %s -q \"error handling\" --format md\n", binName)
 }
