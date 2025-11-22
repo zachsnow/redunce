@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode"
+
+	"github.com/go-enry/go-enry/v2"
 )
 
 // List of common binary and non-source file extensions to skip
@@ -61,6 +63,87 @@ var skipDirs = map[string]bool{
 	".idea":        true,
 	".vscode":      true,
 	".DS_Store":    true,
+}
+
+// Common filenames to skip (build/package files, configs, etc.)
+var skipFilenames = map[string]bool{
+	"go.mod":             true,
+	"go.sum":             true,
+	"package.json":       true,
+	"package-lock.json":  true,
+	"yarn.lock":          true,
+	"pnpm-lock.yaml":     true,
+	"Cargo.lock":         true,
+	"Gemfile.lock":       true,
+	"composer.lock":      true,
+	"Pipfile.lock":       true,
+	"poetry.lock":        true,
+	"requirements.txt":   true,
+	"Makefile":           true,
+	"Dockerfile":         true,
+	"docker-compose.yml": true,
+	".dockerignore":      true,
+	".gitignore":         true,
+	".gitattributes":     true,
+	"LICENSE":            true,
+	"COPYING":            true,
+}
+
+// shouldAnalyzeFile uses enry to determine if a file should be analyzed
+// Returns true for programming language files, false for vendored, generated, docs, or data files
+func shouldAnalyzeFile(path string, content []byte) bool {
+	basename := filepath.Base(path)
+
+	// Skip common build/config files by name
+	if skipFilenames[basename] {
+		return false
+	}
+
+	// Skip README and documentation files
+	if strings.HasPrefix(strings.ToUpper(basename), "README") {
+		return false
+	}
+
+	// Skip common documentation/text file extensions
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext == ".md" || ext == ".markdown" || ext == ".txt" || ext == ".rst" || ext == ".adoc" {
+		return false
+	}
+
+	// Use enry to detect file type
+	language := enry.GetLanguage(basename, content)
+
+	// Skip if not a programming language (e.g., data files, configs)
+	if language == "" {
+		return false
+	}
+
+	// Skip vendored files (third-party code)
+	if enry.IsVendor(path) {
+		return false
+	}
+
+	// Skip generated files (auto-generated code)
+	if enry.IsGenerated(path, content) {
+		return false
+	}
+
+	// Skip documentation files
+	if enry.IsDocumentation(path) {
+		return false
+	}
+
+	// Skip configuration files
+	if enry.IsConfiguration(path) {
+		return false
+	}
+
+	// Skip markup languages (Markdown, HTML, etc.)
+	if enry.GetLanguageType(language) == enry.Markup {
+		return false
+	}
+
+	return true
 }
 
 // ScanPaths recursively scans the given paths and returns all source files
@@ -130,6 +213,18 @@ func ScanPaths(paths []string) ([]string, error) {
 					return nil
 				}
 
+				// Read file content for enry analysis
+				content, err := os.ReadFile(path)
+				if err != nil {
+					// If we can't read it, skip it
+					return nil
+				}
+
+				// Use enry to determine if we should analyze this file
+				if !shouldAnalyzeFile(path, content) {
+					return nil
+				}
+
 				// Add file
 				files = append(files, path)
 				seen[path] = true
@@ -142,7 +237,18 @@ func ScanPaths(paths []string) ([]string, error) {
 			// Single file
 			if !seen[absPath] {
 				// Skip binary files by content
-				if !isBinaryFile(absPath) {
+				if isBinaryFile(absPath) {
+					continue
+				}
+
+				// Read file content for enry analysis
+				content, err := os.ReadFile(absPath)
+				if err != nil {
+					return nil, fmt.Errorf("failed to read file %s: %w", absPath, err)
+				}
+
+				// Use enry to determine if we should analyze this file
+				if shouldAnalyzeFile(absPath, content) {
 					files = append(files, absPath)
 					seen[absPath] = true
 				}
