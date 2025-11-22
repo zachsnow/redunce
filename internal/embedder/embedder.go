@@ -56,9 +56,11 @@ func (e *OpenAIEmbedder) EmbedBatch(chunks []*store.Chunk) ([][]float64, error) 
 	// Prepare input texts
 	texts := make([]string, len(chunks))
 	for i, chunk := range chunks {
+		// Preprocess code to remove noise
+		cleanedCode := preprocessCode(chunk.Code)
 		// Format chunk for embedding
 		text := fmt.Sprintf("language: %s\npath: %s\nlines: %d-%d\n\n%s",
-			chunk.Language, chunk.Path, chunk.StartLine, chunk.EndLine, chunk.Code)
+			chunk.Language, chunk.Path, chunk.StartLine, chunk.EndLine, cleanedCode)
 		texts[i] = text
 	}
 

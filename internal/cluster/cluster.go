@@ -22,6 +22,11 @@ func FindClusters(db *store.Store, threshold float64) ([]*Cluster, error) {
 		return nil, fmt.Errorf("failed to delete existing clusters: %w", err)
 	}
 
+	// Quantize vectors for fast searching (if sqlite-vector is loaded)
+	if err := db.QuantizeVectors(); err != nil {
+		return nil, fmt.Errorf("failed to quantize vectors: %w", err)
+	}
+
 	// Get all chunks ordered by code length descending
 	chunks, err := db.GetAllChunks()
 	if err != nil {
@@ -29,9 +34,26 @@ func FindClusters(db *store.Store, threshold float64) ([]*Cluster, error) {
 	}
 
 	var clusters []*Cluster
+	totalChunks := len(chunks)
+	processed := 0
 
 	// Process each chunk
 	for _, chunk := range chunks {
+		processed++
+
+		// Show progress every 10% or every 100 chunks, whichever is smaller
+		progressInterval := totalChunks / 10
+		if progressInterval > 100 {
+			progressInterval = 100
+		}
+		if progressInterval < 1 {
+			progressInterval = 1
+		}
+
+		if processed%progressInterval == 0 || processed == totalChunks {
+			fmt.Printf("  Processed %d/%d chunks, found %d clusters so far\n", processed, totalChunks, len(clusters))
+		}
+
 		// Check if chunk is already in a cluster
 		inCluster, err := db.IsChunkInCluster(chunk.ID)
 		if err != nil {
@@ -61,7 +83,8 @@ func FindClusters(db *store.Store, threshold float64) ([]*Cluster, error) {
 			}
 		}
 
-		// If we have similar chunks, create a cluster
+		// Only create a cluster if we have at least one similar chunk
+		// (canonical chunk + similar chunks = at least 2 chunks total)
 		if len(validSimilar) > 0 {
 			// Calculate statistics
 			var avgSim, maxSim float64
@@ -102,7 +125,10 @@ func FindClusters(db *store.Store, threshold float64) ([]*Cluster, error) {
 				MaxSimilarity:  maxSim,
 			}
 
-			clusters = append(clusters, cluster)
+			// Only add clusters with more than 1 chunk
+			if len(clusterChunks) > 1 {
+				clusters = append(clusters, cluster)
+			}
 		}
 	}
 

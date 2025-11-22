@@ -36,7 +36,7 @@ func main() {
 	flag.Float64Var(&cfg.Threshold, "threshold", 0.8, "similarity threshold (0-1)")
 	flag.StringVar(&cfg.EmbedMethod, "embed", "openai", "embedding method: local|openai")
 	flag.StringVar(&cfg.Format, "format", "md", "output format: json|md")
-	flag.IntVar(&cfg.LocalMinLines, "local-min-lines", 1, "minimum lines per chunk for local")
+	flag.IntVar(&cfg.LocalMinLines, "local-min-lines", 3, "minimum lines per chunk for local")
 	flag.IntVar(&cfg.LocalMaxLines, "local-max-lines", 30, "maximum lines per chunk for local")
 	flag.IntVar(&cfg.LocalStepLines, "local-step-lines", 3, "line step size for local chunker")
 	flag.IntVar(&cfg.TreesitterMin, "treesitter-min", 5, "minimum node size for tree-sitter")
@@ -158,6 +158,11 @@ func chunkFile(cfg Config, path string) ([]*store.Chunk, error) {
 }
 
 func handleQuery(cfg Config, db *store.Store) error {
+	// Quantize vectors for fast searching (if sqlite-vector is loaded)
+	if err := db.QuantizeVectors(); err != nil {
+		return fmt.Errorf("failed to quantize vectors: %w", err)
+	}
+
 	var queryEmbedding []float64
 
 	switch cfg.EmbedMethod {

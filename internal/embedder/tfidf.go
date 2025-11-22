@@ -8,6 +8,23 @@ import (
 	"github.com/ZachSnow/redunce/internal/store"
 )
 
+// preprocessCode cleans code by removing empty lines and lines with only braces
+func preprocessCode(code string) string {
+	lines := strings.Split(code, "\n")
+	var cleaned []string
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// Skip empty lines and lines containing only { or }
+		if trimmed == "" || trimmed == "{" || trimmed == "}" {
+			continue
+		}
+		cleaned = append(cleaned, line)
+	}
+
+	return strings.Join(cleaned, "\n")
+}
+
 // TFIDFEmbedder uses TF-IDF for local embeddings
 type TFIDFEmbedder struct {
 	vocabulary map[string]int // word -> index
@@ -51,7 +68,9 @@ func (e *TFIDFEmbedder) buildVocabulary(chunks []*store.Chunk) {
 	totalDocs := len(chunks)
 
 	for _, chunk := range chunks {
-		tokens := e.tokenize(chunk.Code)
+		// Preprocess code to remove noise
+		cleanedCode := preprocessCode(chunk.Code)
+		tokens := e.tokenize(cleanedCode)
 		// Use a set to count each term only once per document
 		seen := make(map[string]bool)
 		for _, token := range tokens {
@@ -103,7 +122,9 @@ func (e *TFIDFEmbedder) buildVocabulary(chunks []*store.Chunk) {
 
 // computeTFIDF computes TF-IDF vector for a single document
 func (e *TFIDFEmbedder) computeTFIDF(text string) []float64 {
-	tokens := e.tokenize(text)
+	// Preprocess code to remove noise
+	cleanedText := preprocessCode(text)
+	tokens := e.tokenize(cleanedText)
 
 	// Compute term frequency
 	tf := make(map[string]float64)
@@ -119,11 +140,14 @@ func (e *TFIDFEmbedder) computeTFIDF(text string) []float64 {
 		}
 	}
 
-	// Create TF-IDF vector
-	vector := make([]float64, len(e.idf))
+	// Create TF-IDF vector with fixed dimension (vectorDim)
+	// This ensures compatibility with OpenAI embeddings (1536 dims)
+	vector := make([]float64, e.vectorDim)
 	for token, freq := range tf {
 		if idx, ok := e.vocabulary[token]; ok {
-			vector[idx] = freq * e.idf[idx]
+			if idx < e.vectorDim {
+				vector[idx] = freq * e.idf[idx]
+			}
 		}
 	}
 
