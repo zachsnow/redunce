@@ -19,15 +19,18 @@ func init() {
 				// Try to load the extension
 				// Note: SQLite adds platform extension (.dylib/.so) automatically
 				extensionPaths := []string{
-					"./libvector",
-					"libvector",
+					"./libvector",                      // Current directory
+					"libvector",                        // System library paths
+					"/opt/homebrew/lib/libvector",      // Homebrew Apple Silicon
+					"/usr/local/lib/libvector",         // Homebrew Intel / Linux
+					"/usr/lib/libvector",               // Standard Linux path
 				}
 
 				var lastErr error
 				for _, path := range extensionPaths {
 					err := conn.LoadExtension(path, "sqlite3_vector_init")
 					if err == nil {
-						fmt.Printf("Successfully loaded sqlite-vector extension\n")
+						fmt.Printf("Successfully loaded sqlite-vector extension from %s\n", path)
 						return nil
 					}
 					lastErr = err

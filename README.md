@@ -209,3 +209,47 @@ Once you have an up-to-date chunk database you can also ask it questions about c
 ```bash
 $ redunce -q "some query"
 ```
+
+# Building
+
+## Prerequisites
+
+- Go 1.25.4 or later
+- [sqlite-vector](https://github.com/sqliteai/sqlite-vector) extension (required for vector similarity search)
+
+## Setup sqlite-vector Extension
+
+`redunce` requires the sqlite-vector extension to be available at runtime. You can download the pre-built binary:
+
+1. Download the latest release for your platform from [sqlite-vector releases](https://github.com/sqliteai/sqlite-vector/releases)
+
+   For macOS (Apple Silicon or Intel):
+   ```bash
+   curl -L https://github.com/sqliteai/sqlite-vector/releases/download/0.9.52/vector-apple-xcframework-0.9.52.zip -o vector.zip
+   unzip vector.zip
+   cp vector.xcframework/macos-arm64_x86_64/vector.framework/vector libvector.dylib
+   ```
+
+2. Code-sign the extension (macOS only):
+   ```bash
+   codesign --remove-signature libvector.dylib
+   codesign -s - libvector.dylib
+   ```
+
+3. Place `libvector.dylib` (or `libvector.so` on Linux) in the project root directory
+
+## Build the Binary
+
+Once the extension is in place, build `redunce` with CGO enabled for SQLite extensions:
+
+```bash
+CGO_CFLAGS="-DSQLITE_ENABLE_LOAD_EXTENSION=1" go build
+```
+
+This will create the `redunce` binary in the current directory. You can then move it to your `$PATH`:
+
+```bash
+mv redunce /usr/local/bin/
+```
+
+The `libvector` extension must remain accessible to the binary at runtime (either in the same directory as the binary, or in a system library path).
