@@ -321,27 +321,15 @@ func isBinaryFile(path string) bool {
 
 // loadIgnoreFile reads a .gitignore or .redunceignore file and returns the patterns
 func loadIgnoreFile(path string) ([]string, error) {
-	file, err := os.Open(path)
+	content, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	defer file.Close()
 
-	var patterns []string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		// Skip empty lines and comments
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		patterns = append(patterns, line)
-	}
-
-	return patterns, scanner.Err()
+	return parseIgnorePatterns(string(content)), nil
 }
 
 // matchesIgnorePatterns checks if a path matches any ignore pattern (.gitignore or .redunceignore)
