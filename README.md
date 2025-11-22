@@ -15,7 +15,7 @@ $ redunce <file-or-directory ...>
 
 Other options:
 
-```bash
+```
   --threshold <float> : set the similarity threshold (0 - 1)
   --embed <local|openai> : use a local embedding vs. sending to OpenAI; eventually other options
   --format <json|md> : emit JSON or Markdown; eventually other options
@@ -23,13 +23,13 @@ Other options:
 
 Specific options for particular components:
 
-```bash
+```
   --local-min-lines : minimum lines per chunk for local
   --local-max-lines : maximum lines per chunk for local embedding
   --local-step-lines : how many lines to step by
   --treesitter-min : minimum node-size
   --treesitter-max : maximum node-size
-  --openai-api-key : API key for OpenAI
+  --openai-api-key : API key for OpenAI; also checks the `OPENAI_API_KEY` environment variable
   --db <file> : the location of the database file; defaults to redunce.db in the working directory
 ```
 
@@ -42,14 +42,61 @@ patterns when determining which files to analyze.
 If a file is ignored by the default patterns, or by your `.gitignore`, you can use a negated pattern (prefixed with
 `!`) to explicitly include it in analysis in your `.redunceignore`.
 
+# Building
+
+## Prerequisites
+
+- Go 1.25.4 or later
+- [sqlite-vector](https://github.com/sqliteai/sqlite-vector) extension (required for vector similarity search)
+
+## Setup sqlite-vector extension
+
+`redunce` requires the sqlite-vector extension to be available at runtime. You can download the pre-built binary:
+
+1. Download the latest release for your platform from [sqlite-vector releases](https://github.com/sqliteai/sqlite-vector/releases)
+
+   For macOS (Apple Silicon or Intel):
+
+   ```bash
+   curl -L https://github.com/sqliteai/sqlite-vector/releases/download/0.9.52/vector-apple-xcframework-0.9.52.zip -o vector.zip
+   unzip vector.zip
+   cp vector.xcframework/macos-arm64_x86_64/vector.framework/vector libvector.dylib
+   ```
+
+2. Code-sign the extension (macOS only):
+
+   ```bash
+   codesign --remove-signature libvector.dylib
+   codesign -s - libvector.dylib
+   ```
+
+3. Place `libvector.dylib` (or `libvector.so` on Linux) in the project root directory
+
+## Build the binary
+
+Once the extension is in place, build `redunce`:
+
+```bash
+$ ./build.sh
+```
+
+This will create the `redunce` binary in the current directory. You can then move it to your `$PATH`:
+
+```bash
+mv redunce /usr/local/bin/
+```
+
+The `libvector` extension must remain accessible to the binary at runtime (either in the same directory as the binary, or in a system library path).
+
+## Cleaning
+
+Clean build artifacts with:
+
+```bash
+$ ./clean.sh
+```
+
 # Algorithm
-
-In the following we describe individual steps as if each step is completed before the next begins.
-In reality when possible we implement a _generator_ approach, so that they **scanner** yields files to
-the **chunker**, which yields chunks to the **embedder**, which yields embeddings to the **store**.
-
-Once the store is populated with embeddings, we can run various queries on it. Then
-we run the **clustering** step. Once clustering is complete we **output** the clusters.
 
 ## Scanning
 
@@ -212,7 +259,7 @@ lines: ...
 ...
 ```
 
-# Updates
+## Updates
 
 Once a codebase has been analyzed and inserted into the database, we can reanalyze it by scanning the codebase,
 getting the modified time of each file, and deleting and reanalyzing a file's chunks only when the file has
@@ -221,56 +268,10 @@ changed since the chunks were created. Then we delete all clusters and re-cluste
 By default `redunce` _always_ updates the current database; you can pass `--reset` if you want to reset the
 database first.
 
-# Search
+## Search
 
 Once you have an up-to-date chunk database you can also ask it questions about code that matches some query:
 
 ```bash
 $ redunce -q "some query"
 ```
-
-# Building
-
-## Prerequisites
-
-- Go 1.25.4 or later
-- [sqlite-vector](https://github.com/sqliteai/sqlite-vector) extension (required for vector similarity search)
-
-## Setup sqlite-vector Extension
-
-`redunce` requires the sqlite-vector extension to be available at runtime. You can download the pre-built binary:
-
-1. Download the latest release for your platform from [sqlite-vector releases](https://github.com/sqliteai/sqlite-vector/releases)
-
-   For macOS (Apple Silicon or Intel):
-
-   ```bash
-   curl -L https://github.com/sqliteai/sqlite-vector/releases/download/0.9.52/vector-apple-xcframework-0.9.52.zip -o vector.zip
-   unzip vector.zip
-   cp vector.xcframework/macos-arm64_x86_64/vector.framework/vector libvector.dylib
-   ```
-
-2. Code-sign the extension (macOS only):
-
-   ```bash
-   codesign --remove-signature libvector.dylib
-   codesign -s - libvector.dylib
-   ```
-
-3. Place `libvector.dylib` (or `libvector.so` on Linux) in the project root directory
-
-## Build the Binary
-
-Once the extension is in place, build `redunce` with CGO enabled for SQLite extensions:
-
-```bash
-CGO_CFLAGS="-DSQLITE_ENABLE_LOAD_EXTENSION=1" go build
-```
-
-This will create the `redunce` binary in the current directory. You can then move it to your `$PATH`:
-
-```bash
-mv redunce /usr/local/bin/
-```
-
-The `libvector` extension must remain accessible to the binary at runtime (either in the same directory as the binary, or in a system library path).
