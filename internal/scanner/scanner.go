@@ -102,10 +102,8 @@ target/
 .idea/
 .vscode/
 
-# Hidden files (except .gitignore and .redunceignore)
+# Hidden files.
 .*
-!.gitignore
-!.redunceignore
 `
 
 // parseIgnorePatterns parses ignore patterns from a string (like file content)

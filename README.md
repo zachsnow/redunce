@@ -13,37 +13,6 @@ If you don't pass any files or directories, it prints usage information.
 $ redunce <file-or-directory ...>
 ```
 
-## .redunceignore
-
-You can create a `.redunceignore` file in your project root to exclude specific files or directories from analysis. The syntax is identical to `.gitignore`, including support for negation patterns:
-
-```
-# .redunceignore - files to skip during analysis
-
-# Exclude all test code
-test_code/
-
-# But include specific test files (negation with !)
-!test_code/important_test.go
-
-# Exclude generated files
-*.generated.go
-*.pb.go
-
-# Exclude third-party code
-vendor/
-
-# Exclude specific directories
-scripts/
-build/
-```
-
-**Key features:**
-- Supports wildcards (`*`, `?`)
-- Supports directory patterns (`test_code/`)
-- Supports negation with `!` prefix (later patterns override earlier ones)
-- Patterns from both `.gitignore` and `.redunceignore` are combined
-
 Other options:
 
 ```bash
@@ -64,6 +33,15 @@ Specific options for particular components:
   --db <file> : the location of the database file; defaults to redunce.db in the working directory
 ```
 
+## .redunceignore
+
+You can create a `.redunceignore` file in your project root to exclude specific files or directories from analysis.
+The syntax is identical to `.gitignore`. Both `.redunceignore` and `.gitignore` are combined with the built-in ignore
+patterns when determining which files to analyze.
+
+If a file is ignored by the default patterns, or by your `.gitignore`, you can use a negated pattern (prefixed with
+`!`) to explicitly include it in analysis in your `.redunceignore`.
+
 # Algorithm
 
 In the following we describe individual steps as if each step is completed before the next begins.
@@ -78,6 +56,7 @@ we run the **clustering** step. Once clustering is complete we **output** the cl
 First, `redunce` collects all files and nested files, so that it has a single large list of absolute filenames.
 
 The scanner automatically filters out:
+
 - Binary files (executables, images, archives, etc.)
 - Vendored code (detected via [enry](https://github.com/go-enry/go-enry))
 - Generated files (auto-generated code)
@@ -264,6 +243,7 @@ $ redunce -q "some query"
 1. Download the latest release for your platform from [sqlite-vector releases](https://github.com/sqliteai/sqlite-vector/releases)
 
    For macOS (Apple Silicon or Intel):
+
    ```bash
    curl -L https://github.com/sqliteai/sqlite-vector/releases/download/0.9.52/vector-apple-xcframework-0.9.52.zip -o vector.zip
    unzip vector.zip
@@ -271,6 +251,7 @@ $ redunce -q "some query"
    ```
 
 2. Code-sign the extension (macOS only):
+
    ```bash
    codesign --remove-signature libvector.dylib
    codesign -s - libvector.dylib
