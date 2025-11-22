@@ -36,8 +36,8 @@ func main() {
 	cfg := Config{}
 
 	// Define flags
-	flag.Float64Var(&cfg.Threshold, "threshold", 0.8, "similarity threshold (0-1)")
-	flag.StringVar(&cfg.EmbedMethod, "embed", "openai", "embedding method: local|openai")
+	flag.Float64Var(&cfg.Threshold, "threshold", 0.85, "similarity threshold (0-1)")
+	flag.StringVar(&cfg.EmbedMethod, "embed", "local", "embedding method: local|openai")
 	flag.StringVar(&cfg.Format, "format", "md", "output format: json|md")
 	flag.IntVar(&cfg.LocalMinLines, "local-min-lines", 3, "minimum lines per chunk for local")
 	flag.IntVar(&cfg.LocalMaxLines, "local-max-lines", 30, "maximum lines per chunk for local")
