@@ -1,6 +1,7 @@
 package embedder
 
 import (
+	"fmt"
 	"math"
 	"regexp"
 	"sort"
@@ -11,20 +12,89 @@ import (
 
 // TFIDFEmbedder uses TF-IDF for local embeddings
 type TFIDFEmbedder struct {
-	vocabulary map[string]int // word -> index
-	idf        []float64      // inverse document frequency for each term
-	vectorDim  int
-	tokenizer  *regexp.Regexp
+	db                *store.Store
+	vocabulary        map[string]int // word -> index
+	idf               []float64      // inverse document frequency for each term
+	vectorDim         int
+	refreezeThreshold float64
+	manualRefreeze    bool
+	tokenizer         *regexp.Regexp
 }
 
 // NewTFIDFEmbedder creates a new TF-IDF embedder
-func NewTFIDFEmbedder(vectorDim int) *TFIDFEmbedder {
+func NewTFIDFEmbedder(db *store.Store, vectorDim int, refreezeThreshold float64, manualRefreeze bool) *TFIDFEmbedder {
 	return &TFIDFEmbedder{
-		vocabulary: make(map[string]int),
-		vectorDim:  vectorDim,
+		db:                db,
+		vocabulary:        make(map[string]int),
+		vectorDim:         vectorDim,
+		refreezeThreshold: refreezeThreshold,
+		manualRefreeze:    manualRefreeze,
 		// Split on non-alphanumeric characters, keeping underscores
 		tokenizer: regexp.MustCompile(`[^a-zA-Z0-9_]+`),
 	}
+}
+
+// PrepareEmbed prepares the TF-IDF embedder by deciding whether to rebuild vocabulary
+// and re-embed all chunks, or to use the frozen vocabulary for only new chunks.
+// Returns true if all chunks should be re-embedded.
+func (e *TFIDFEmbedder) PrepareEmbed(newChunks []*store.Chunk) (bool, error) {
+	shouldRefreeze := e.manualRefreeze
+	reason := "manual"
+
+	if !shouldRefreeze {
+		hasVocab, err := e.db.HasVocabulary()
+		if err != nil {
+			return false, fmt.Errorf("failed to check vocabulary existence: %w", err)
+		}
+
+		if !hasVocab {
+			shouldRefreeze = true
+			reason = "initial"
+		} else {
+			// Check auto-refreeze threshold
+			autoRefreeze, newChunkRatio, err := e.db.ShouldRefreeze(e.refreezeThreshold)
+			if err != nil {
+				return false, fmt.Errorf("failed to check refreeze condition: %w", err)
+			}
+			if autoRefreeze {
+				shouldRefreeze = true
+				reason = fmt.Sprintf("%.1f%% corpus growth", newChunkRatio*100)
+			}
+		}
+	}
+
+	if shouldRefreeze {
+		// REFREEZE: Build vocabulary from all chunks
+		existingChunks, err := e.db.GetAllChunks()
+		if err != nil {
+			return false, fmt.Errorf("failed to get existing chunks: %w", err)
+		}
+
+		allChunks := append(existingChunks, newChunks...)
+		e.buildVocabulary(allChunks)
+
+		// Save vocabulary to database
+		if err := e.db.SaveVocabulary(e.vocabulary, e.idf); err != nil {
+			return false, fmt.Errorf("failed to save vocabulary: %w", err)
+		}
+
+		// Update freeze metadata
+		if err := e.db.SetFreezeMetadata(len(allChunks), reason); err != nil {
+			return false, fmt.Errorf("failed to set freeze metadata: %w", err)
+		}
+
+		return true, nil
+	}
+
+	// FROZEN: Load existing vocabulary
+	vocab, idf, err := e.db.LoadVocabulary()
+	if err != nil {
+		return false, fmt.Errorf("failed to load vocabulary: %w", err)
+	}
+	e.vocabulary = vocab
+	e.idf = idf
+
+	return false, nil
 }
 
 // tokenize splits text into tokens
@@ -170,4 +240,15 @@ func (e *TFIDFEmbedder) EmbedBatch(chunks []*store.Chunk) ([][]float64, error) {
 func (e *TFIDFEmbedder) UpdateVocabulary(newChunks []*store.Chunk, existingChunks []*store.Chunk) {
 	allChunks := append(existingChunks, newChunks...)
 	e.buildVocabulary(allChunks)
+}
+
+// SetVocabulary sets a pre-built vocabulary (e.g., loaded from database)
+func (e *TFIDFEmbedder) SetVocabulary(vocab map[string]int, idf []float64) {
+	e.vocabulary = vocab
+	e.idf = idf
+}
+
+// GetVocabulary returns the current vocabulary and IDF values
+func (e *TFIDFEmbedder) GetVocabulary() (map[string]int, []float64) {
+	return e.vocabulary, e.idf
 }

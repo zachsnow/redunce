@@ -54,10 +54,12 @@ type Config struct {
 	DBPath         string
 	Reset          bool
 	Query          string
-	PrintIgnore    bool
-	PrintFiles     bool
-	PrintChunks    bool
-	Verbose        bool
+	PrintIgnore       bool
+	PrintFiles        bool
+	PrintChunks       bool
+	Verbose           bool
+	LocalRefreezeThreshold float64
+	LocalRefreeze          bool
 }
 
 func main() {
@@ -80,6 +82,8 @@ func main() {
 	flag.BoolVar(&cfg.PrintFiles, "print-files", false, "print scanned files and exit")
 	flag.BoolVar(&cfg.PrintChunks, "print-chunks", false, "print chunks and exit")
 	flag.BoolVar(&cfg.Verbose, "verbose", false, "enable verbose progress output")
+	flag.Float64Var(&cfg.LocalRefreezeThreshold, "refreeze-threshold", 0.20, "auto-refreeze vocabulary when new chunks exceed this fraction of corpus (0.0-1.0)")
+	flag.BoolVar(&cfg.LocalRefreeze, "refreeze", false, "manually trigger vocabulary refreeze and re-embed all chunks")
 
 	flag.Parse()
 
@@ -225,7 +229,8 @@ func run(cfg Config, paths []string) error {
 			return err
 		}
 	case "local":
-		totalChunks, err = processFilesWithTFIDF(cfg, db, files)
+		emb := embedder.NewTFIDFEmbedder(db, store.EmbeddingDimension, cfg.LocalRefreezeThreshold, cfg.LocalRefreeze)
+		totalChunks, err = processFiles(cfg, db, files, emb)
 		if err != nil {
 			return err
 		}
@@ -261,7 +266,6 @@ func chunkFile(cfg Config, path string) ([]*store.Chunk, error) {
 	// Use tree-sitter for supported languages
 	// If tree-sitter parsing fails, we return the error (no fallback)
 	if lang != "" {
-		fmt.Printf("  Using tree-sitter chunking for %s\n", lang)
 		chunks, err := chunker.ChunkWithTreeSitter(path, lang, cfg.TreesitterMin, cfg.TreesitterMax)
 		if err != nil {
 			return nil, fmt.Errorf("tree-sitter chunking failed for %s: %w", lang, err)
@@ -294,19 +298,16 @@ func handleQuery(cfg Config, db *store.Store) error {
 		queryEmbedding = embeddings[0]
 
 	case "local":
-		// For TF-IDF, we need to build vocabulary from existing chunks
-		fmt.Println("Loading existing chunks for TF-IDF...")
-		existingChunks, err := db.GetAllChunks()
+		// For TF-IDF, load the frozen vocabulary from database
+		fmt.Println("Loading TF-IDF vocabulary from database...")
+		vocab, idf, err := db.LoadVocabulary()
 		if err != nil {
-			return fmt.Errorf("failed to get existing chunks: %w", err)
-		}
-		if len(existingChunks) == 0 {
-			return fmt.Errorf("no chunks in database. Please run analysis first before searching")
+			return fmt.Errorf("failed to load vocabulary: %w", err)
 		}
 
-		fmt.Println("Building TF-IDF vocabulary...")
-		tfidf := embedder.NewTFIDFEmbedder(store.EmbeddingDimension)
-		tfidf.UpdateVocabulary([]*store.Chunk{}, existingChunks)
+		// Create TF-IDF embedder and set vocabulary
+		tfidf := embedder.NewTFIDFEmbedder(db, store.EmbeddingDimension, 0, false)
+		tfidf.SetVocabulary(vocab, idf)
 
 		fmt.Println("Embedding query...")
 		queryChunk := &store.Chunk{Code: cfg.Query}
@@ -420,23 +421,16 @@ func processFilesStreaming(cfg Config, db *store.Store, files []string, emb embe
 	return totalChunks, nil
 }
 
-func processFilesWithTFIDF(cfg Config, db *store.Store, files []string) (int, error) {
-	fmt.Println("Processing files (TF-IDF mode)...")
+func processFiles(cfg Config, db *store.Store, files []string, emb embedder.Embedder) (int, error) {
+	logVerbose("Processing files...\n")
 
-	// Step 0: Delete all existing clusters since we'll be re-embedding with new vocabulary
-	// This is necessary to avoid foreign key constraint errors
-	fmt.Println("Step 0: Clearing existing clusters...")
-	if err := db.DeleteAllClusters(); err != nil {
-		return 0, fmt.Errorf("failed to delete existing clusters: %w", err)
-	}
-
-	// Step 1: Collect all chunks that need processing
-	fmt.Println("Step 1: Chunking files...")
+	// Step 1: Chunk new files
+	logVerbose("Step 1: Chunking files...\n")
 	var allNewChunks []*store.Chunk
 	var filesToUpdate []string
 
 	for i, file := range files {
-		fmt.Printf("Chunking [%d/%d]: %s\n", i+1, len(files), file)
+		logVerbose("Chunking [%d/%d]: %s\n", i+1, len(files), file)
 
 		// Check if file needs updating
 		needsUpdate, err := db.NeedsUpdate(file)
@@ -445,14 +439,14 @@ func processFilesWithTFIDF(cfg Config, db *store.Store, files []string) (int, er
 		}
 
 		if !needsUpdate {
-			fmt.Printf("  Skipping (up to date)\n")
+			logVerbose("  Skipping (up to date)\n")
 			continue
 		}
 
 		// Chunk the file
 		chunks, err := chunkFile(cfg, file)
 		if err != nil {
-			fmt.Printf("  Warning: failed to chunk file: %v\n", err)
+			logVerbose("  Warning: failed to chunk file: %v\n", err)
 			continue
 		}
 
@@ -462,96 +456,74 @@ func processFilesWithTFIDF(cfg Config, db *store.Store, files []string) (int, er
 
 		allNewChunks = append(allNewChunks, chunks...)
 		filesToUpdate = append(filesToUpdate, file)
-		fmt.Printf("  Created %d chunks\n", len(chunks))
+		logVerbose("  Created %d chunks\n", len(chunks))
 	}
 
 	if len(allNewChunks) == 0 {
-		fmt.Println("No new chunks to process")
+		logVerbose("No new chunks to process\n")
 		return 0, nil
 	}
 
-	// Step 2: Get existing chunks for vocabulary building
-	fmt.Println("Step 2: Loading existing chunks...")
-	existingChunks, err := db.GetAllChunks()
+	// Step 2: Prepare embedder and decide whether to re-embed all chunks
+	logVerbose("Step 2: Preparing embedder...\n")
+	shouldReembedAll, err := emb.PrepareEmbed(allNewChunks)
 	if err != nil {
-		return 0, fmt.Errorf("failed to get existing chunks: %w", err)
-	}
-	fmt.Printf("Found %d existing chunks\n", len(existingChunks))
-
-	// Step 3: Build TF-IDF vocabulary from all chunks
-	fmt.Println("Step 3: Building TF-IDF vocabulary...")
-	tfidf := embedder.NewTFIDFEmbedder(store.EmbeddingDimension) // Use same dim as OpenAI for consistency
-
-	// Combine existing and new chunks for vocabulary
-	allChunks := append(existingChunks, allNewChunks...)
-	tfidf.UpdateVocabulary(allNewChunks, existingChunks)
-	fmt.Printf("Built vocabulary with %d chunks\n", len(allChunks))
-
-	// Step 4: If we have existing chunks, we need to re-embed them with new vocabulary
-	if len(existingChunks) > 0 {
-		fmt.Println("Step 4: Re-embedding existing chunks with updated vocabulary...")
-
-		// First, collect unique file paths and delete all existing chunks once
-		uniquePaths := make(map[string]bool)
-		for _, chunk := range existingChunks {
-			uniquePaths[chunk.Path] = true
-		}
-		for path := range uniquePaths {
-			if err := db.DeleteChunksForFile(path); err != nil {
-				return 0, fmt.Errorf("failed to delete existing chunks: %w", err)
-			}
-		}
-
-		// Re-embed existing chunks with new vocabulary
-		for i := 0; i < len(existingChunks); i += BatchSize {
-			end := i + BatchSize
-			if end > len(existingChunks) {
-				end = len(existingChunks)
-			}
-			batch := existingChunks[i:end]
-
-			embeddings, err := tfidf.EmbedBatch(batch)
-			if err != nil {
-				return 0, fmt.Errorf("failed to embed existing chunks: %w", err)
-			}
-
-			// Update embeddings in memory
-			for j, chunk := range batch {
-				chunk.Embedding = embeddings[j]
-			}
-		}
-
-		// Re-insert existing chunks with new embeddings
-		for i, chunk := range existingChunks {
-			if err := db.InsertChunk(chunk); err != nil {
-				return 0, fmt.Errorf("failed to re-insert chunk: %w", err)
-			}
-			if (i+1)%BatchSize == 0 {
-				fmt.Printf("  Re-inserted %d/%d chunks\n", i+1, len(existingChunks))
-			}
-		}
+		return 0, fmt.Errorf("failed to prepare embedder: %w", err)
 	}
 
-	// Step 5: Embed and store new chunks
-	fmt.Println("Step 5: Embedding and storing new chunks...")
-	for _, file := range filesToUpdate {
-		// Delete old chunks for this file
-		if err := db.DeleteChunksForFile(file); err != nil {
-			return 0, fmt.Errorf("failed to delete old chunks: %w", err)
-		}
-	}
+	var chunksToEmbed []*store.Chunk
 
-	// Find chunks for each file and insert them
-	for i := 0; i < len(allNewChunks); i += BatchSize {
-		end := i + BatchSize
-		if end > len(allNewChunks) {
-			end = len(allNewChunks)
-		}
-		batch := allNewChunks[i:end]
+	if shouldReembedAll {
+		// REEMBED ALL: Delete everything and re-embed all chunks
+		logVerbose("Re-embedding all chunks\n")
 
-		embeddings, err := tfidf.EmbedBatch(batch)
+		// Delete clusters (will be rebuilt later)
+		if err := db.DeleteAllClusters(); err != nil {
+			return 0, fmt.Errorf("failed to delete clusters: %w", err)
+		}
+
+		// Load existing chunks
+		existingChunks, err := db.GetAllChunks()
 		if err != nil {
-			return 0, fmt.Errorf("failed to embed new chunks: %w", err)
+			return 0, fmt.Errorf("failed to get existing chunks: %w", err)
+		}
+		logVerbose("Found %d existing chunks\n", len(existingChunks))
+
+		// Delete all chunks (CASCADE handles cluster memberships)
+		if err := db.DeleteAllChunks(); err != nil {
+			return 0, fmt.Errorf("failed to delete all chunks: %w", err)
+		}
+
+		// Combine existing and new chunks for re-embedding
+		chunksToEmbed = append(existingChunks, allNewChunks...)
+		logVerbose("Re-embedding %d total chunks...\n", len(chunksToEmbed))
+
+	} else {
+		// INCREMENTAL: Embed only new chunks
+		logVerbose("Embedding only new chunks\n")
+
+		// Delete old chunks for updated files
+		for _, file := range filesToUpdate {
+			if err := db.DeleteChunksForFile(file); err != nil {
+				return 0, fmt.Errorf("failed to delete old chunks: %w", err)
+			}
+		}
+
+		chunksToEmbed = allNewChunks
+		logVerbose("Embedding %d new chunks...\n", len(chunksToEmbed))
+	}
+
+	// Step 3: Embed chunks in batches
+	for i := 0; i < len(chunksToEmbed); i += BatchSize {
+		end := i + BatchSize
+		if end > len(chunksToEmbed) {
+			end = len(chunksToEmbed)
+		}
+		batch := chunksToEmbed[i:end]
+
+		embeddings, err := emb.EmbedBatch(batch)
+		if err != nil {
+			return 0, fmt.Errorf("failed to embed chunks: %w", err)
 		}
 
 		for j, chunk := range batch {
@@ -561,9 +533,10 @@ func processFilesWithTFIDF(cfg Config, db *store.Store, files []string) (int, er
 			}
 		}
 
-		fmt.Printf("  Embedded and stored %d/%d new chunks\n", end, len(allNewChunks))
+		logVerbose("  Embedded and stored %d/%d chunks\n", end, len(chunksToEmbed))
 	}
 
+	logVerbose("✓ Processing complete\n")
 	return len(allNewChunks), nil
 }
 

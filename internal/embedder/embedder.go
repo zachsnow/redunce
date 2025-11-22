@@ -14,6 +14,11 @@ import (
 
 // Embedder is an interface for embedding text
 type Embedder interface {
+	// PrepareEmbed prepares the embedder for embedding, deciding whether all chunks
+	// need to be re-embedded or just new ones. Returns true if all chunks should be re-embedded.
+	PrepareEmbed(newChunks []*store.Chunk) (bool, error)
+
+	// EmbedBatch embeds a batch of chunks
 	EmbedBatch(chunks []*store.Chunk) ([][]float64, error)
 }
 
@@ -49,6 +54,12 @@ func NewOpenAIEmbedder(apiKey string) *OpenAIEmbedder {
 			Timeout: 30 * time.Second,
 		},
 	}
+}
+
+// PrepareEmbed for OpenAI always returns false (no re-embedding needed)
+// In the future, this could check for model version changes
+func (e *OpenAIEmbedder) PrepareEmbed(newChunks []*store.Chunk) (bool, error) {
+	return false, nil
 }
 
 // EmbedBatch embeds a batch of chunks using OpenAI

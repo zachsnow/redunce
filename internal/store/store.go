@@ -30,7 +30,7 @@ func init() {
 				for _, path := range extensionPaths {
 					err := conn.LoadExtension(path, "sqlite3_vector_init")
 					if err == nil {
-						fmt.Printf("Successfully loaded sqlite-vector extension from %s\n", path)
+						// Successfully loaded extension
 						return nil
 					}
 					lastErr = err
@@ -113,7 +113,7 @@ func (s *Store) initSchema() error {
 		avg_similarity REAL,
 		max_similarity REAL,
 		size INTEGER,
-		FOREIGN KEY (canonical_chunk_id) REFERENCES chunks(id)
+		FOREIGN KEY (canonical_chunk_id) REFERENCES chunks(id) ON DELETE CASCADE
 	);
 
 	CREATE TABLE IF NOT EXISTS cluster_chunks (
@@ -121,8 +121,21 @@ func (s *Store) initSchema() error {
 		chunk_id INTEGER NOT NULL,
 		similarity REAL NOT NULL,
 		PRIMARY KEY (cluster_id, chunk_id),
-		FOREIGN KEY (cluster_id) REFERENCES clusters(id),
-		FOREIGN KEY (chunk_id) REFERENCES chunks(id)
+		FOREIGN KEY (cluster_id) REFERENCES clusters(id) ON DELETE CASCADE,
+		FOREIGN KEY (chunk_id) REFERENCES chunks(id) ON DELETE CASCADE
+	);
+
+	CREATE TABLE IF NOT EXISTS vocabulary (
+		term TEXT PRIMARY KEY,
+		term_index INTEGER NOT NULL,
+		idf REAL NOT NULL
+	);
+
+	CREATE TABLE IF NOT EXISTS vocabulary_metadata (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		vocabulary_frozen_at TEXT,
+		total_chunks_at_freeze INTEGER,
+		last_refreeze_reason TEXT
 	);
 	`
 
@@ -169,10 +182,21 @@ func (s *Store) NeedsUpdate(path string) (bool, error) {
 }
 
 // DeleteChunksForFile deletes all chunks for a given file
+// Cluster memberships and clusters are automatically deleted via ON DELETE CASCADE
 func (s *Store) DeleteChunksForFile(path string) error {
 	_, err := s.db.Exec("DELETE FROM chunks WHERE path = ?", path)
 	if err != nil {
 		return fmt.Errorf("failed to delete chunks: %w", err)
+	}
+	return nil
+}
+
+// DeleteAllChunks deletes all chunks from the database
+// Cluster memberships and clusters are automatically deleted via ON DELETE CASCADE
+func (s *Store) DeleteAllChunks() error {
+	_, err := s.db.Exec("DELETE FROM chunks")
+	if err != nil {
+		return fmt.Errorf("failed to delete all chunks: %w", err)
 	}
 	return nil
 }
@@ -470,4 +494,171 @@ func (s *Store) QuantizeVectors() error {
 	}
 
 	return nil
+}
+
+// SaveVocabulary saves the TF-IDF vocabulary to the database
+func (s *Store) SaveVocabulary(vocab map[string]int, idf []float64) error {
+	// Start transaction
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to start transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Clear existing vocabulary
+	if _, err := tx.Exec("DELETE FROM vocabulary"); err != nil {
+		return fmt.Errorf("failed to clear vocabulary: %w", err)
+	}
+
+	// Insert vocabulary terms
+	stmt, err := tx.Prepare("INSERT INTO vocabulary (term, term_index, idf) VALUES (?, ?, ?)")
+	if err != nil {
+		return fmt.Errorf("failed to prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for term, index := range vocab {
+		if index >= len(idf) {
+			continue // Skip invalid indices
+		}
+		if _, err := stmt.Exec(term, index, idf[index]); err != nil {
+			return fmt.Errorf("failed to insert term %s: %w", term, err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+// LoadVocabulary loads the TF-IDF vocabulary from the database
+func (s *Store) LoadVocabulary() (map[string]int, []float64, error) {
+	rows, err := s.db.Query("SELECT term, term_index, idf FROM vocabulary ORDER BY term_index")
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to query vocabulary: %w", err)
+	}
+	defer rows.Close()
+
+	vocab := make(map[string]int)
+	var idfList []float64
+	maxIndex := -1
+
+	// First pass: find max index
+	type vocabEntry struct {
+		term  string
+		index int
+		idf   float64
+	}
+	var entries []vocabEntry
+
+	for rows.Next() {
+		var term string
+		var index int
+		var idfVal float64
+		if err := rows.Scan(&term, &index, &idfVal); err != nil {
+			return nil, nil, fmt.Errorf("failed to scan row: %w", err)
+		}
+		entries = append(entries, vocabEntry{term, index, idfVal})
+		if index > maxIndex {
+			maxIndex = index
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	if len(entries) == 0 {
+		return nil, nil, fmt.Errorf("no vocabulary found")
+	}
+
+	// Build IDF array with correct size
+	idfList = make([]float64, maxIndex+1)
+	for _, entry := range entries {
+		vocab[entry.term] = entry.index
+		idfList[entry.index] = entry.idf
+	}
+
+	return vocab, idfList, nil
+}
+
+// HasVocabulary checks if a vocabulary exists in the database
+func (s *Store) HasVocabulary() (bool, error) {
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM vocabulary").Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("failed to check vocabulary: %w", err)
+	}
+	return count > 0, nil
+}
+
+// GetChunkCount returns the total number of chunks in the database
+func (s *Store) GetChunkCount() (int, error) {
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM chunks").Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count chunks: %w", err)
+	}
+	return count, nil
+}
+
+// GetFreezeMetadata returns the vocabulary freeze metadata
+func (s *Store) GetFreezeMetadata() (frozenAt time.Time, chunksAtFreeze int, reason string, err error) {
+	var frozenAtStr string
+	err = s.db.QueryRow("SELECT vocabulary_frozen_at, total_chunks_at_freeze, last_refreeze_reason FROM vocabulary_metadata WHERE id = 1").
+		Scan(&frozenAtStr, &chunksAtFreeze, &reason)
+
+	if err == sql.ErrNoRows {
+		return time.Time{}, 0, "", nil
+	}
+	if err != nil {
+		return time.Time{}, 0, "", fmt.Errorf("failed to get freeze metadata: %w", err)
+	}
+
+	frozenAt, err = time.Parse(time.RFC3339, frozenAtStr)
+	if err != nil {
+		return time.Time{}, 0, "", fmt.Errorf("failed to parse frozen_at time: %w", err)
+	}
+
+	return frozenAt, chunksAtFreeze, reason, nil
+}
+
+// SetFreezeMetadata updates the vocabulary freeze metadata
+func (s *Store) SetFreezeMetadata(chunksAtFreeze int, reason string) error {
+	frozenAt := time.Now().Format(time.RFC3339)
+
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO vocabulary_metadata (id, vocabulary_frozen_at, total_chunks_at_freeze, last_refreeze_reason)
+		VALUES (1, ?, ?, ?)
+	`, frozenAt, chunksAtFreeze, reason)
+
+	if err != nil {
+		return fmt.Errorf("failed to set freeze metadata: %w", err)
+	}
+	return nil
+}
+
+// ShouldRefreeze determines if vocabulary should be refrozen based on corpus growth
+func (s *Store) ShouldRefreeze(threshold float64) (bool, float64, error) {
+	currentCount, err := s.GetChunkCount()
+	if err != nil {
+		return false, 0, err
+	}
+
+	_, chunksAtFreeze, _, err := s.GetFreezeMetadata()
+	if err != nil {
+		return false, 0, err
+	}
+
+	// If no freeze metadata, should freeze
+	if chunksAtFreeze == 0 {
+		return true, 0, nil
+	}
+
+	// Calculate new chunks ratio
+	newChunks := currentCount - chunksAtFreeze
+	if newChunks <= 0 {
+		return false, 0, nil
+	}
+
+	newChunkRatio := float64(newChunks) / float64(currentCount)
+	return newChunkRatio > threshold, newChunkRatio, nil
 }
