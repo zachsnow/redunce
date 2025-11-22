@@ -23,15 +23,17 @@ func init() {
 					"libvector",
 				}
 
+				var lastErr error
 				for _, path := range extensionPaths {
 					err := conn.LoadExtension(path, "sqlite3_vector_init")
 					if err == nil {
 						fmt.Printf("Successfully loaded sqlite-vector extension\n")
 						return nil
 					}
+					lastErr = err
 				}
-				// Return nil even if extension loading fails - we'll fall back to Go-based similarity
-				return nil
+				// Fail if extension can't be loaded
+				return fmt.Errorf("failed to load sqlite-vector extension (tried: %v): %w", extensionPaths, lastErr)
 			},
 		})
 }
@@ -68,21 +70,8 @@ func NewStore(dbPath string, reset bool) (*Store, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// Check if vector extension was loaded in init()
-	// Test by checking if vector functions are available
-	var vectorLoaded bool
-	var testResult int
-	err = db.QueryRow("SELECT 1").Scan(&testResult)
-	if err == nil {
-		// Extension is loaded based on init() output
-		// We'll verify it works when we try to use vector_init later
-		vectorLoaded = true
-	} else {
-		vectorLoaded = false
-		fmt.Println("Warning: Database connection test failed")
-	}
-
-	store := &Store{db: db, vectorLoaded: vectorLoaded}
+	// Extension loading happens in ConnectHook - if we got here, it succeeded
+	store := &Store{db: db, vectorLoaded: true}
 
 	// Initialize schema
 	if err := store.initSchema(); err != nil {
@@ -133,13 +122,10 @@ func (s *Store) initSchema() error {
 		return fmt.Errorf("failed to create schema: %w", err)
 	}
 
-	// Initialize vector search if sqlite-vector is loaded
-	if s.vectorLoaded {
-		_, err := s.db.Exec("SELECT vector_init('chunks', 'embedding', 'type=FLOAT32,dimension=1536,distance=COSINE')")
-		if err != nil {
-			fmt.Printf("Warning: vector_init failed: %v\n", err)
-			s.vectorLoaded = false
-		}
+	// Initialize vector search with sqlite-vector
+	_, err := s.db.Exec("SELECT vector_init('chunks', 'embedding', 'type=FLOAT32,dimension=1536,distance=COSINE')")
+	if err != nil {
+		return fmt.Errorf("failed to initialize vector search: %w", err)
 	}
 
 	return nil
@@ -285,6 +271,28 @@ func (s *Store) GetChunkByID(id int64) (*Chunk, error) {
 	return chunk, nil
 }
 
+// IsSubset returns true if chunk a is a subset of chunk b or vice versa
+// A chunk is a subset if it's from the same file and its line range is entirely contained
+func IsSubset(a, b *Chunk) bool {
+	// Must be from the same file
+	if a.Path != b.Path {
+		return false
+	}
+
+	// Check if a is subset of b (or equal)
+	aInB := a.StartLine >= b.StartLine && a.EndLine <= b.EndLine
+	// Check if b is subset of a (or equal)
+	bInA := b.StartLine >= a.StartLine && b.EndLine <= a.EndLine
+
+	// If they're equal, not a subset
+	if aInB && bInA {
+		return false
+	}
+
+	// If either is contained in the other, it's a subset relationship
+	return aInB || bInA
+}
+
 // CosineSimilarity calculates the cosine similarity between two vectors
 func CosineSimilarity(a, b []float64) float64 {
 	if len(a) != len(b) {
@@ -325,66 +333,26 @@ func (s *Store) FindSimilarChunks(chunkID int64, limit int) ([]*Chunk, error) {
 		return nil, fmt.Errorf("failed to get target chunk: %w", err)
 	}
 
-	// Try using sqlite-vector's vector_quantize_scan if available
-	if s.vectorLoaded {
-		embeddingBlob := serializeVector(targetChunk.Embedding)
-		rows, err := s.db.Query(`
-			SELECT c.id, c.path, c.language, c.start_line, c.end_line, c.code, c.embedding, v.distance
-			FROM chunks AS c
-			JOIN vector_quantize_scan('chunks', 'embedding', ?, ?) AS v
-			ON c.rowid = v.rowid
-			WHERE c.id != ?
-		`, embeddingBlob, limit, chunkID)
-
-		if err == nil {
-			// sqlite-vector is available, use optimized search
-			defer rows.Close()
-			var results []*Chunk
-			for rows.Next() {
-				chunk := &Chunk{}
-				var embeddingBytes []byte
-				var distance float64
-				err := rows.Scan(&chunk.ID, &chunk.Path, &chunk.Language, &chunk.StartLine, &chunk.EndLine, &chunk.Code, &embeddingBytes, &distance)
-				if err != nil {
-					return nil, fmt.Errorf("failed to scan chunk: %w", err)
-				}
-
-				if len(embeddingBytes) > 0 {
-					chunk.Embedding = deserializeVector(embeddingBytes)
-				}
-
-				// Convert distance to similarity
-				// For cosine distance: similarity = 1 - distance
-				chunk.Similarity = 1.0 - distance
-
-				results = append(results, chunk)
-			}
-			return results, rows.Err()
-		}
-		// If vector_distance failed, fall through to Go-based similarity
-	}
-
-	// Fall back to Go-based similarity search
+	// Use sqlite-vector's vector_quantize_scan
+	embeddingBlob := serializeVector(targetChunk.Embedding)
 	rows, err := s.db.Query(`
-		SELECT id, path, language, start_line, end_line, code, embedding
-		FROM chunks
-		WHERE id != ?
-	`, chunkID)
+		SELECT c.id, c.path, c.language, c.start_line, c.end_line, c.code, c.embedding, v.distance
+		FROM chunks AS c
+		JOIN vector_quantize_scan('chunks', 'embedding', ?, ?) AS v
+		ON c.rowid = v.rowid
+		WHERE c.id != ?
+	`, embeddingBlob, limit, chunkID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query chunks: %w", err)
+		return nil, fmt.Errorf("failed to search similar chunks: %w", err)
 	}
 	defer rows.Close()
 
-	type chunkWithSim struct {
-		chunk      *Chunk
-		similarity float64
-	}
-
-	var candidates []chunkWithSim
+	var results []*Chunk
 	for rows.Next() {
 		chunk := &Chunk{}
 		var embeddingBytes []byte
-		err := rows.Scan(&chunk.ID, &chunk.Path, &chunk.Language, &chunk.StartLine, &chunk.EndLine, &chunk.Code, &embeddingBytes)
+		var distance float64
+		err := rows.Scan(&chunk.ID, &chunk.Path, &chunk.Language, &chunk.StartLine, &chunk.EndLine, &chunk.Code, &embeddingBytes, &distance)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan chunk: %w", err)
 		}
@@ -393,96 +361,34 @@ func (s *Store) FindSimilarChunks(chunkID int64, limit int) ([]*Chunk, error) {
 			chunk.Embedding = deserializeVector(embeddingBytes)
 		}
 
-		// Calculate similarity
-		similarity := CosineSimilarity(targetChunk.Embedding, chunk.Embedding)
-		chunk.Similarity = similarity
-
-		candidates = append(candidates, chunkWithSim{chunk: chunk, similarity: similarity})
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	// Sort by similarity descending
-	for i := 0; i < len(candidates)-1; i++ {
-		for j := i + 1; j < len(candidates); j++ {
-			if candidates[j].similarity > candidates[i].similarity {
-				candidates[i], candidates[j] = candidates[j], candidates[i]
-			}
+		// Skip chunks that are subsets of the target chunk or vice versa
+		if IsSubset(chunk, targetChunk) {
+			continue
 		}
+
+		// Convert distance to similarity
+		// For cosine distance: similarity = 1 - distance
+		chunk.Similarity = 1.0 - distance
+
+		results = append(results, chunk)
 	}
 
-	// Return top N
-	var results []*Chunk
-	for i := 0; i < limit && i < len(candidates); i++ {
-		results = append(results, candidates[i].chunk)
-	}
-
-	return results, nil
+	return results, rows.Err()
 }
 
 // SearchSimilar searches for chunks similar to a given embedding
 func (s *Store) SearchSimilar(embedding []float64, limit int, threshold float64) ([]*Chunk, error) {
 	embeddingBlob := serializeVector(embedding)
 
-	// Try using sqlite-vector if available
-	if s.vectorLoaded {
-		rows, err := s.db.Query(`
-			SELECT c.id, c.path, c.language, c.start_line, c.end_line, c.code, c.embedding, v.distance
-			FROM chunks AS c
-			JOIN vector_quantize_scan('chunks', 'embedding', ?, ?) AS v
-			ON c.rowid = v.rowid
-		`, embeddingBlob, limit*2) // Request more to filter by threshold
-
-		if err == nil {
-			defer rows.Close()
-			type chunkWithSim struct {
-				chunk      *Chunk
-				similarity float64
-			}
-
-			var candidates []chunkWithSim
-			for rows.Next() {
-				chunk := &Chunk{}
-				var embeddingBytes []byte
-				var distance float64
-				err := rows.Scan(&chunk.ID, &chunk.Path, &chunk.Language, &chunk.StartLine, &chunk.EndLine, &chunk.Code, &embeddingBytes, &distance)
-				if err != nil {
-					return nil, fmt.Errorf("failed to scan chunk: %w", err)
-				}
-
-				if len(embeddingBytes) > 0 {
-					chunk.Embedding = deserializeVector(embeddingBytes)
-				}
-
-				// Convert distance to similarity
-				similarity := 1.0 - distance
-				if similarity >= threshold {
-					chunk.Similarity = similarity
-					candidates = append(candidates, chunkWithSim{chunk: chunk, similarity: similarity})
-				}
-			}
-
-			if err := rows.Err(); err != nil {
-				return nil, err
-			}
-
-			// Already sorted by distance, just need to return top N
-			var results []*Chunk
-			for i := 0; i < limit && i < len(candidates); i++ {
-				results = append(results, candidates[i].chunk)
-			}
-
-			return results, nil
-		}
-		// If vector_distance failed, fall through to Go-based similarity
-	}
-
-	// Fall back to Go-based similarity search
-	rows, err := s.db.Query(`SELECT id, path, language, start_line, end_line, code, embedding FROM chunks`)
+	// Use sqlite-vector for similarity search
+	rows, err := s.db.Query(`
+		SELECT c.id, c.path, c.language, c.start_line, c.end_line, c.code, c.embedding, v.distance
+		FROM chunks AS c
+		JOIN vector_quantize_scan('chunks', 'embedding', ?, ?) AS v
+		ON c.rowid = v.rowid
+	`, embeddingBlob, limit*2) // Request more to filter by threshold
 	if err != nil {
-		return nil, fmt.Errorf("failed to query chunks: %w", err)
+		return nil, fmt.Errorf("failed to search chunks: %w", err)
 	}
 	defer rows.Close()
 
@@ -495,7 +401,8 @@ func (s *Store) SearchSimilar(embedding []float64, limit int, threshold float64)
 	for rows.Next() {
 		chunk := &Chunk{}
 		var embeddingBytes []byte
-		err := rows.Scan(&chunk.ID, &chunk.Path, &chunk.Language, &chunk.StartLine, &chunk.EndLine, &chunk.Code, &embeddingBytes)
+		var distance float64
+		err := rows.Scan(&chunk.ID, &chunk.Path, &chunk.Language, &chunk.StartLine, &chunk.EndLine, &chunk.Code, &embeddingBytes, &distance)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan chunk: %w", err)
 		}
@@ -504,8 +411,8 @@ func (s *Store) SearchSimilar(embedding []float64, limit int, threshold float64)
 			chunk.Embedding = deserializeVector(embeddingBytes)
 		}
 
-		// Calculate similarity
-		similarity := CosineSimilarity(embedding, chunk.Embedding)
+		// Convert distance to similarity
+		similarity := 1.0 - distance
 		if similarity >= threshold {
 			chunk.Similarity = similarity
 			candidates = append(candidates, chunkWithSim{chunk: chunk, similarity: similarity})
@@ -516,16 +423,7 @@ func (s *Store) SearchSimilar(embedding []float64, limit int, threshold float64)
 		return nil, err
 	}
 
-	// Sort by similarity descending
-	for i := 0; i < len(candidates)-1; i++ {
-		for j := i + 1; j < len(candidates); j++ {
-			if candidates[j].similarity > candidates[i].similarity {
-				candidates[i], candidates[j] = candidates[j], candidates[i]
-			}
-		}
-	}
-
-	// Return top N
+	// Already sorted by distance, just need to return top N
 	var results []*Chunk
 	for i := 0; i < limit && i < len(candidates); i++ {
 		results = append(results, candidates[i].chunk)
@@ -582,10 +480,6 @@ func (s *Store) IsChunkInCluster(chunkID int64) (bool, error) {
 
 // QuantizeVectors prepares vector data for fast searching
 func (s *Store) QuantizeVectors() error {
-	if !s.vectorLoaded {
-		return nil // Skip if extension not loaded
-	}
-
 	_, err := s.db.Exec("SELECT vector_quantize('chunks', 'embedding')")
 	if err != nil {
 		return fmt.Errorf("failed to quantize vectors: %w", err)

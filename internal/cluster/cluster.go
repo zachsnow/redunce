@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/ZachSnow/redunce/internal/store"
 )
@@ -131,6 +132,11 @@ func FindClusters(db *store.Store, threshold float64) ([]*Cluster, error) {
 			}
 		}
 	}
+
+	// Sort clusters by canonical chunk length (descending)
+	sort.Slice(clusters, func(i, j int) bool {
+		return len(clusters[i].CanonicalChunk.Code) > len(clusters[j].CanonicalChunk.Code)
+	})
 
 	return clusters, nil
 }

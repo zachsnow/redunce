@@ -143,17 +143,20 @@ func chunkFile(cfg Config, path string) ([]*store.Chunk, error) {
 	ext := filepath.Ext(path)
 	lang := chunker.LanguageFromExtension(ext)
 
-	// Try tree-sitter first for supported languages
-	if lang != "" && cfg.EmbedMethod != "local" {
+	// Use tree-sitter for supported languages
+	// If tree-sitter parsing fails, we return the error (no fallback)
+	if lang != "" {
+		fmt.Printf("  Using tree-sitter chunking for %s\n", lang)
 		chunks, err := chunker.ChunkWithTreeSitter(path, lang, cfg.TreesitterMin, cfg.TreesitterMax)
-		if err == nil {
-			return chunks, nil
+		if err != nil {
+			return nil, fmt.Errorf("tree-sitter chunking failed for %s: %w", lang, err)
 		}
-		// Fall back to line-based on error
-		fmt.Printf("  Tree-sitter failed, falling back to line-based chunking\n")
+		return chunks, nil
 	}
 
-	// Use line-based chunker
+	// Use line-based chunker only for file types we don't have tree-sitter support for
+	// This is not an error - just an expected fallback for unsupported extensions
+	fmt.Printf("  Using line-based chunking (no tree-sitter parser available for %s)\n", ext)
 	return chunker.ChunkByLines(path, cfg.LocalMinLines, cfg.LocalMaxLines, cfg.LocalStepLines)
 }
 
