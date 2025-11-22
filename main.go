@@ -17,6 +17,9 @@ import (
 const (
 	// BatchSize is the number of chunks to process in one batch
 	BatchSize = 64
+
+	// Version is the application version
+	Version = "0.1.0"
 )
 
 // Global verbose flag
@@ -65,8 +68,10 @@ type Config struct {
 
 func main() {
 	cfg := Config{}
+	var showVersion bool
 
 	// Define flags
+	flag.BoolVar(&showVersion, "version", false, "show version and exit")
 	flag.Float64Var(&cfg.Threshold, "threshold", 0.85, "similarity threshold (0-1)")
 	flag.StringVar(&cfg.EmbedMethod, "embed", "local", "embedding method: local|openai")
 	flag.StringVar(&cfg.Format, "format", "md", "output format: json|md")
@@ -88,6 +93,12 @@ func main() {
 	flag.BoolVar(&cfg.LocalRefreeze, "refreeze", false, "manually trigger vocabulary refreeze and re-embed all chunks")
 
 	flag.Parse()
+
+	// Handle version flag
+	if showVersion {
+		fmt.Printf("redunce version %s\n", Version)
+		os.Exit(0)
+	}
 
 	// Get remaining arguments as files/directories
 	args := flag.Args()
