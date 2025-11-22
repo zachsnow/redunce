@@ -60,6 +60,7 @@ type Config struct {
 	Verbose           bool
 	LocalRefreezeThreshold float64
 	LocalRefreeze          bool
+	Limit                  int
 }
 
 func main() {
@@ -69,6 +70,7 @@ func main() {
 	flag.Float64Var(&cfg.Threshold, "threshold", 0.85, "similarity threshold (0-1)")
 	flag.StringVar(&cfg.EmbedMethod, "embed", "local", "embedding method: local|openai")
 	flag.StringVar(&cfg.Format, "format", "md", "output format: json|md")
+	flag.IntVar(&cfg.Limit, "limit", 10, "limit output to top N clusters (0 = no limit)")
 	flag.IntVar(&cfg.LocalMinLines, "local-min-lines", 3, "minimum lines per chunk for local")
 	flag.IntVar(&cfg.LocalMaxLines, "local-max-lines", 30, "maximum lines per chunk for local")
 	flag.IntVar(&cfg.LocalStepLines, "local-step-lines", 3, "line step size for local chunker")
@@ -248,6 +250,12 @@ func run(cfg Config, paths []string) error {
 	}
 	logVerbose("Found %d clusters\n", len(clusters))
 
+	// Apply limit if specified
+	if cfg.Limit > 0 && len(clusters) > cfg.Limit {
+		clusters = clusters[:cfg.Limit]
+		logVerbose("Limiting output to top %d clusters\n", cfg.Limit)
+	}
+
 	// Output results
 	logVerbose("Generating output...\n")
 	formatter, err := createFormatter(cfg.Format)
@@ -274,8 +282,8 @@ func chunkFile(cfg Config, path string) ([]*store.Chunk, error) {
 	}
 
 	// Use line-based chunker only for file types we don't have tree-sitter support for
-	// This is not an error - just an expected fallback for unsupported extensions
-	fmt.Printf("  Using line-based chunking (no tree-sitter parser available for %s)\n", ext)
+	// This is expected behavior for unsupported extensions
+	logVerbose("  Using line-based chunking (no tree-sitter parser for %s)\n", ext)
 	return chunker.ChunkByLines(path, cfg.LocalMinLines, cfg.LocalMaxLines, cfg.LocalStepLines)
 }
 
@@ -353,6 +361,11 @@ func handleQuery(cfg Config, db *store.Store) error {
 			cl.AvgSimilarity /= float64(len(results))
 		}
 		clusters = append(clusters, cl)
+	}
+
+	// Apply limit if specified
+	if cfg.Limit > 0 && len(clusters) > cfg.Limit {
+		clusters = clusters[:cfg.Limit]
 	}
 
 	return formatter.Format(os.Stdout, clusters)
