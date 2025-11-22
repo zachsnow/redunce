@@ -27,6 +27,9 @@ type Config struct {
 	DBPath         string
 	Reset          bool
 	Query          string
+	PrintIgnore    bool
+	PrintFiles     bool
+	PrintChunks    bool
 }
 
 func main() {
@@ -45,11 +48,87 @@ func main() {
 	flag.StringVar(&cfg.DBPath, "db", "redunce.db", "database file path")
 	flag.BoolVar(&cfg.Reset, "reset", false, "reset database before running")
 	flag.StringVar(&cfg.Query, "q", "", "search query mode")
+	flag.BoolVar(&cfg.PrintIgnore, "print-ignore", false, "print resolved ignore patterns and exit")
+	flag.BoolVar(&cfg.PrintFiles, "print-files", false, "print scanned files and exit")
+	flag.BoolVar(&cfg.PrintChunks, "print-chunks", false, "print chunks and exit")
 
 	flag.Parse()
 
 	// Get remaining arguments as files/directories
 	args := flag.Args()
+
+	// Handle --print-ignore flag
+	if cfg.PrintIgnore {
+		// Use current directory if no args provided
+		baseDir := "."
+		if len(args) > 0 {
+			baseDir = args[0]
+		}
+		absDir, err := filepath.Abs(baseDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to get absolute path: %v\n", err)
+			os.Exit(1)
+		}
+		patterns, err := scanner.GetResolvedIgnorePatterns(absDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to get ignore patterns: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("# Resolved ignore patterns (default + .gitignore + .redunceignore)")
+		fmt.Printf("# Base directory: %s\n\n", absDir)
+		for _, pattern := range patterns {
+			fmt.Println(pattern)
+		}
+		return
+	}
+
+	// Handle --print-files flag
+	if cfg.PrintFiles {
+		if len(args) == 0 {
+			args = []string{"."}
+		}
+		files, err := scanner.ScanPaths(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to scan paths: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("# Scanned files (%d total)\n\n", len(files))
+		for _, file := range files {
+			fmt.Println(file)
+		}
+		return
+	}
+
+	// Handle --print-chunks flag
+	if cfg.PrintChunks {
+		if len(args) == 0 {
+			args = []string{"."}
+		}
+		files, err := scanner.ScanPaths(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to scan paths: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("# Processing %d files\n\n", len(files))
+		totalChunks := 0
+		for _, file := range files {
+			chunks, err := chunkFile(cfg, file)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to chunk %s: %v\n", file, err)
+				continue
+			}
+			for _, chunk := range chunks {
+				totalChunks++
+				fmt.Printf("## Chunk %d\n", totalChunks)
+				fmt.Printf("File: %s\n", chunk.Path)
+				fmt.Printf("Language: %s\n", chunk.Language)
+				fmt.Printf("Lines: %d-%d\n", chunk.StartLine, chunk.EndLine)
+				fmt.Printf("```%s\n%s\n```\n\n", chunk.Language, chunk.Code)
+			}
+		}
+		fmt.Printf("# Total chunks: %d\n", totalChunks)
+		return
+	}
 
 	// If no arguments and no query, print usage
 	if len(args) == 0 && cfg.Query == "" {

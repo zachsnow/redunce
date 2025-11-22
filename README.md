@@ -13,6 +13,37 @@ If you don't pass any files or directories, it prints usage information.
 $ redunce <file-or-directory ...>
 ```
 
+## .redunceignore
+
+You can create a `.redunceignore` file in your project root to exclude specific files or directories from analysis. The syntax is identical to `.gitignore`, including support for negation patterns:
+
+```
+# .redunceignore - files to skip during analysis
+
+# Exclude all test code
+test_code/
+
+# But include specific test files (negation with !)
+!test_code/important_test.go
+
+# Exclude generated files
+*.generated.go
+*.pb.go
+
+# Exclude third-party code
+vendor/
+
+# Exclude specific directories
+scripts/
+build/
+```
+
+**Key features:**
+- Supports wildcards (`*`, `?`)
+- Supports directory patterns (`test_code/`)
+- Supports negation with `!` prefix (later patterns override earlier ones)
+- Patterns from both `.gitignore` and `.redunceignore` are combined
+
 Other options:
 
 ```bash
@@ -45,6 +76,15 @@ we run the **clustering** step. Once clustering is complete we **output** the cl
 ## Scanning
 
 First, `redunce` collects all files and nested files, so that it has a single large list of absolute filenames.
+
+The scanner automatically filters out:
+- Binary files (executables, images, archives, etc.)
+- Vendored code (detected via [enry](https://github.com/go-enry/go-enry))
+- Generated files (auto-generated code)
+- Configuration files (`go.mod`, `package.json`, etc.)
+- Documentation files (README, `.md`, `.txt`, etc.)
+- Files matching `.gitignore` patterns
+- Files matching `.redunceignore` patterns
 
 ## Chunking
 

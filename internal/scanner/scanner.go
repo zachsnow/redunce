@@ -12,108 +12,149 @@ import (
 	"github.com/go-enry/go-enry/v2"
 )
 
-// List of common binary and non-source file extensions to skip
-var skipExtensions = map[string]bool{
-	".exe":   true,
-	".dll":   true,
-	".so":    true,
-	".dylib": true,
-	".a":     true,
-	".o":     true,
-	".db":    true, // Database files
-	".sqlite": true,
-	".sqlite3": true,
-	".pdf":   true,
-	".jpg":   true,
-	".jpeg":  true,
-	".png":   true,
-	".gif":   true,
-	".bmp":   true,
-	".ico":   true,
-	".zip":   true,
-	".tar":   true,
-	".gz":    true,
-	".rar":   true,
-	".7z":    true,
-	".mp3":   true,
-	".mp4":   true,
-	".avi":   true,
-	".mov":   true,
-	".ttf":   true,
-	".woff":  true,
-	".woff2": true,
-	".eot":   true,
+// Default ignore patterns - these are always applied before user's .redunceignore
+const defaultRedunceignore = `# Default redunce ignore patterns
+# Users can override these with ! in their .redunceignore
+
+# Binary files
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.o
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Media files
+*.pdf
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.ico
+*.mp3
+*.mp4
+*.avi
+*.mov
+
+# Fonts
+*.ttf
+*.woff
+*.woff2
+*.eot
+
+# Archives
+*.zip
+*.tar
+*.gz
+*.rar
+*.7z
+
+# Package manager lock files
+go.sum
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+Cargo.lock
+Gemfile.lock
+composer.lock
+Pipfile.lock
+poetry.lock
+
+# Build/config files
+go.mod
+package.json
+requirements.txt
+Makefile
+Dockerfile
+docker-compose.yml
+.dockerignore
+.gitattributes
+
+# Documentation files
+*.md
+*.txt
+*.rst
+*.adoc
+README*
+LICENSE
+COPYING
+
+# Common directories to skip
+.git/
+.svn/
+.hg/
+node_modules/
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+build/
+dist/
+target/
+.gradle/
+.idea/
+.vscode/
+
+# Hidden files (except .gitignore and .redunceignore)
+.*
+!.gitignore
+!.redunceignore
+`
+
+// parseIgnorePatterns parses ignore patterns from a string (like file content)
+func parseIgnorePatterns(content string) []string {
+	var patterns []string
+	scanner := bufio.NewScanner(strings.NewReader(content))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		// Skip empty lines and comments
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		patterns = append(patterns, line)
+	}
+	return patterns
 }
 
-// Common directories to skip
-var skipDirs = map[string]bool{
-	".git":         true,
-	".svn":         true,
-	".hg":          true,
-	"node_modules": true,
-	".venv":        true,
-	"venv":         true,
-	"__pycache__":  true,
-	".pytest_cache": true,
-	".mypy_cache":  true,
-	"build":        true,
-	"dist":         true,
-	"target":       true,
-	".gradle":      true,
-	".idea":        true,
-	".vscode":      true,
-	".DS_Store":    true,
-}
+// GetResolvedIgnorePatterns returns the combined ignore patterns (default + gitignore + redunceignore)
+func GetResolvedIgnorePatterns(baseDir string) ([]string, error) {
+	// Start with default patterns
+	patterns := parseIgnorePatterns(defaultRedunceignore)
 
-// Common filenames to skip (build/package files, configs, etc.)
-var skipFilenames = map[string]bool{
-	"go.mod":             true,
-	"go.sum":             true,
-	"package.json":       true,
-	"package-lock.json":  true,
-	"yarn.lock":          true,
-	"pnpm-lock.yaml":     true,
-	"Cargo.lock":         true,
-	"Gemfile.lock":       true,
-	"composer.lock":      true,
-	"Pipfile.lock":       true,
-	"poetry.lock":        true,
-	"requirements.txt":   true,
-	"Makefile":           true,
-	"Dockerfile":         true,
-	"docker-compose.yml": true,
-	".dockerignore":      true,
-	".gitignore":         true,
-	".gitattributes":     true,
-	"LICENSE":            true,
-	"COPYING":            true,
+	// Add .gitignore patterns
+	gitignorePath := filepath.Join(baseDir, ".gitignore")
+	gitignorePatterns, err := loadIgnoreFile(gitignorePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load .gitignore: %w", err)
+	}
+	patterns = append(patterns, gitignorePatterns...)
+
+	// Add .redunceignore patterns (these come last so they can override)
+	redunceignorePath := filepath.Join(baseDir, ".redunceignore")
+	redunceignorePatterns, err := loadIgnoreFile(redunceignorePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load .redunceignore: %w", err)
+	}
+	patterns = append(patterns, redunceignorePatterns...)
+
+	return patterns, nil
 }
 
 // shouldAnalyzeFile uses enry to determine if a file should be analyzed
 // Returns true for programming language files, false for vendored, generated, docs, or data files
 func shouldAnalyzeFile(path string, content []byte) bool {
-	basename := filepath.Base(path)
-
-	// Skip common build/config files by name
-	if skipFilenames[basename] {
-		return false
-	}
-
-	// Skip README and documentation files
-	if strings.HasPrefix(strings.ToUpper(basename), "README") {
-		return false
-	}
-
-	// Skip common documentation/text file extensions
-	ext := strings.ToLower(filepath.Ext(path))
-	if ext == ".md" || ext == ".markdown" || ext == ".txt" || ext == ".rst" || ext == ".adoc" {
-		return false
-	}
-
 	// Use enry to detect file type
-	language := enry.GetLanguage(basename, content)
+	language := enry.GetLanguage(filepath.Base(path), content)
 
 	// Skip if not a programming language (e.g., data files, configs)
+	// Empty language means enry couldn't detect it
 	if language == "" {
 		return false
 	}
@@ -128,21 +169,7 @@ func shouldAnalyzeFile(path string, content []byte) bool {
 		return false
 	}
 
-	// Skip documentation files
-	if enry.IsDocumentation(path) {
-		return false
-	}
-
-	// Skip configuration files
-	if enry.IsConfiguration(path) {
-		return false
-	}
-
-	// Skip markup languages (Markdown, HTML, etc.)
-	if enry.GetLanguageType(language) == enry.Markup {
-		return false
-	}
-
+	// All other detected programming languages are OK
 	return true
 }
 
@@ -165,41 +192,29 @@ func ScanPaths(paths []string) ([]string, error) {
 		}
 
 		if info.IsDir() {
-			// Load .gitignore from this directory
-			gitignorePath := filepath.Join(absPath, ".gitignore")
-			gitignorePatterns, err := loadGitignore(gitignorePath)
+			// Get resolved ignore patterns (default + .gitignore + .redunceignore)
+			allPatterns, err := GetResolvedIgnorePatterns(absPath)
 			if err != nil {
-				return nil, fmt.Errorf("failed to load .gitignore: %w", err)
+				return nil, err
 			}
+
 			// Walk directory
 			err = filepath.Walk(absPath, func(path string, info os.FileInfo, err error) error {
 				if err != nil {
 					return err
 				}
 
-				// Skip directories we don't want to scan
-				if info.IsDir() {
-					if skipDirs[info.Name()] || strings.HasPrefix(info.Name(), ".") && info.Name() != "." {
+				// Skip if matching ignore patterns (works for both files and directories)
+				ignored, _ := matchesIgnorePatterns(path, absPath, allPatterns)
+				if ignored {
+					if info.IsDir() {
 						return filepath.SkipDir
 					}
 					return nil
 				}
 
-				// Skip hidden files (except .gitignore which we want to analyze)
-				if strings.HasPrefix(info.Name(), ".") && info.Name() != ".gitignore" {
-					return nil
-				}
-
-				// Skip files matching .gitignore patterns (but not .gitignore itself)
-				if info.Name() != ".gitignore" && len(gitignorePatterns) > 0 {
-					if matchesGitignore(path, absPath, gitignorePatterns) {
-						return nil
-					}
-				}
-
-				// Skip binary and non-source files by extension
-				ext := strings.ToLower(filepath.Ext(path))
-				if skipExtensions[ext] {
+				// Continue walking into directories
+				if info.IsDir() {
 					return nil
 				}
 
@@ -306,8 +321,8 @@ func isBinaryFile(path string) bool {
 	return ratio > 0.30
 }
 
-// loadGitignore reads a .gitignore file and returns the patterns
-func loadGitignore(path string) ([]string, error) {
+// loadIgnoreFile reads a .gitignore or .redunceignore file and returns the patterns
+func loadIgnoreFile(path string) ([]string, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -331,54 +346,80 @@ func loadGitignore(path string) ([]string, error) {
 	return patterns, scanner.Err()
 }
 
-// matchesGitignore checks if a path matches any gitignore pattern
-func matchesGitignore(path string, baseDir string, patterns []string) bool {
+// matchesIgnorePatterns checks if a path matches any ignore pattern (.gitignore or .redunceignore)
+// Supports negation patterns with "!" prefix
+func matchesIgnorePatterns(path string, baseDir string, patterns []string) (bool, string) {
 	// Get relative path from base directory
 	relPath, err := filepath.Rel(baseDir, path)
 	if err != nil {
-		return false
+		return false, ""
 	}
 
+	// Never exclude the root directory itself
+	if relPath == "." {
+		return false, ""
+	}
+
+	ignored := false
+	var matchedPattern string
+
+	// Process patterns in order - later patterns can override earlier ones
 	for _, pattern := range patterns {
-		// Handle negation patterns (!)
-		if strings.HasPrefix(pattern, "!") {
-			continue // Skip negation for simplicity
+		isNegation := strings.HasPrefix(pattern, "!")
+		originalPattern := pattern
+		if isNegation {
+			pattern = strings.TrimPrefix(pattern, "!")
 		}
 
 		// Remove leading slash
 		pattern = strings.TrimPrefix(pattern, "/")
 
+		matched := false
+
 		// Simple pattern matching
-		matched, err := filepath.Match(pattern, filepath.Base(relPath))
-		if err == nil && matched {
-			return true
+		m, err := filepath.Match(pattern, filepath.Base(relPath))
+		if err == nil && m {
+			matched = true
 		}
 
 		// Check if pattern matches full path
-		matched, err = filepath.Match(pattern, relPath)
-		if err == nil && matched {
-			return true
+		if !matched {
+			m, err = filepath.Match(pattern, relPath)
+			if err == nil && m {
+				matched = true
+			}
 		}
 
 		// Check directory patterns (ending with /)
-		if strings.HasSuffix(pattern, "/") {
+		if !matched && strings.HasSuffix(pattern, "/") {
 			dirPattern := strings.TrimSuffix(pattern, "/")
 			if strings.Contains(relPath, dirPattern+string(filepath.Separator)) {
-				return true
+				matched = true
 			}
 			if filepath.Base(path) == dirPattern {
-				return true
+				matched = true
 			}
 		}
 
 		// Check wildcard patterns like *.db
-		if strings.Contains(pattern, "*") {
-			matched, _ = filepath.Match(pattern, filepath.Base(path))
-			if matched {
-				return true
+		if !matched && strings.Contains(pattern, "*") {
+			m, _ := filepath.Match(pattern, filepath.Base(path))
+			if m {
+				matched = true
+			}
+		}
+
+		// Apply the pattern
+		if matched {
+			if isNegation {
+				ignored = false // Negation pattern - un-ignore
+				matchedPattern = ""
+			} else {
+				ignored = true // Normal pattern - ignore
+				matchedPattern = originalPattern
 			}
 		}
 	}
 
-	return false
+	return ignored, matchedPattern
 }
