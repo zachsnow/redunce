@@ -1,8 +1,10 @@
 package store
 
 import (
+	"crypto/sha1"
 	"database/sql"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"os"
@@ -54,6 +56,7 @@ type Chunk struct {
 	StartLine  int
 	EndLine    int
 	Code       string
+	SHA        string    // Git-style SHA of the chunk content
 	Embedding  []float64
 	Similarity float64 // Used for search results
 }
@@ -61,6 +64,21 @@ type Chunk struct {
 type Store struct {
 	db           *sql.DB
 	vectorLoaded bool
+}
+
+// ComputeChunkSHA computes a git-style SHA-1 hash of the chunk content
+func ComputeChunkSHA(code string) string {
+	h := sha1.New()
+	h.Write([]byte(code))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// ShortSHA returns the first 8 characters of a SHA (like git)
+func ShortSHA(sha string) string {
+	if len(sha) <= 8 {
+		return sha
+	}
+	return sha[:8]
 }
 
 // NewStore creates a new store and initializes the database
@@ -100,11 +118,13 @@ func (s *Store) initSchema() error {
 		start_line INTEGER NOT NULL,
 		end_line INTEGER NOT NULL,
 		code TEXT NOT NULL,
+		sha TEXT NOT NULL,
 		embedding BLOB
 	);
 
 	CREATE INDEX IF NOT EXISTS chunks_path_idx ON chunks(path);
 	CREATE INDEX IF NOT EXISTS chunks_modifiedAt_idx ON chunks(modifiedAt);
+	CREATE INDEX IF NOT EXISTS chunks_sha_idx ON chunks(sha);
 
 	CREATE TABLE IF NOT EXISTS clusters (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -137,6 +157,16 @@ func (s *Store) initSchema() error {
 		total_chunks_at_freeze INTEGER,
 		last_refreeze_reason TEXT
 	);
+
+	CREATE TABLE IF NOT EXISTS ignores (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		sha TEXT NOT NULL UNIQUE,
+		code TEXT NOT NULL,
+		embedding BLOB NOT NULL,
+		created_at TEXT DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE INDEX IF NOT EXISTS ignores_sha_idx ON ignores(sha);
 	`
 
 	if _, err := s.db.Exec(schema); err != nil {
@@ -219,6 +249,11 @@ func (s *Store) InsertChunk(chunk *Chunk) error {
 	}
 	chunk.ModifiedAt = info.ModTime().Unix()
 
+	// Compute SHA if not already set
+	if chunk.SHA == "" {
+		chunk.SHA = ComputeChunkSHA(chunk.Code)
+	}
+
 	// Serialize embedding to BLOB
 	var embeddingBlob []byte
 	if len(chunk.Embedding) > 0 {
@@ -227,8 +262,8 @@ func (s *Store) InsertChunk(chunk *Chunk) error {
 
 	// Insert into chunks table with embedding
 	result, err := s.db.Exec(
-		"INSERT INTO chunks (path, modifiedAt, language, start_line, end_line, code, embedding) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		chunk.Path, chunk.ModifiedAt, chunk.Language, chunk.StartLine, chunk.EndLine, chunk.Code, embeddingBlob,
+		"INSERT INTO chunks (path, modifiedAt, language, start_line, end_line, code, sha, embedding) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		chunk.Path, chunk.ModifiedAt, chunk.Language, chunk.StartLine, chunk.EndLine, chunk.Code, chunk.SHA, embeddingBlob,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert chunk: %w", err)
@@ -255,7 +290,7 @@ func deserializeVector(data []byte) []float64 {
 // GetAllChunks returns all chunks ordered by code length descending
 func (s *Store) GetAllChunks() ([]*Chunk, error) {
 	rows, err := s.db.Query(`
-		SELECT id, path, language, start_line, end_line, code, embedding
+		SELECT id, path, language, start_line, end_line, code, sha, embedding
 		FROM chunks
 		ORDER BY LENGTH(code) DESC
 	`)
@@ -268,7 +303,7 @@ func (s *Store) GetAllChunks() ([]*Chunk, error) {
 	for rows.Next() {
 		chunk := &Chunk{}
 		var embeddingBytes []byte
-		err := rows.Scan(&chunk.ID, &chunk.Path, &chunk.Language, &chunk.StartLine, &chunk.EndLine, &chunk.Code, &embeddingBytes)
+		err := rows.Scan(&chunk.ID, &chunk.Path, &chunk.Language, &chunk.StartLine, &chunk.EndLine, &chunk.Code, &chunk.SHA, &embeddingBytes)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan chunk: %w", err)
 		}
@@ -288,10 +323,10 @@ func (s *Store) GetChunkByID(id int64) (*Chunk, error) {
 	chunk := &Chunk{}
 	var embeddingBytes []byte
 	err := s.db.QueryRow(`
-		SELECT id, path, language, start_line, end_line, code, embedding
+		SELECT id, path, language, start_line, end_line, code, sha, embedding
 		FROM chunks
 		WHERE id = ?
-	`, id).Scan(&chunk.ID, &chunk.Path, &chunk.Language, &chunk.StartLine, &chunk.EndLine, &chunk.Code, &embeddingBytes)
+	`, id).Scan(&chunk.ID, &chunk.Path, &chunk.Language, &chunk.StartLine, &chunk.EndLine, &chunk.Code, &chunk.SHA, &embeddingBytes)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get chunk: %w", err)
@@ -337,7 +372,7 @@ func (s *Store) FindSimilarChunks(chunkID int64, limit int) ([]*Chunk, error) {
 	// Use sqlite-vector's vector_quantize_scan
 	embeddingBlob := serializeVector(targetChunk.Embedding)
 	rows, err := s.db.Query(`
-		SELECT c.id, c.path, c.language, c.start_line, c.end_line, c.code, c.embedding, v.distance
+		SELECT c.id, c.path, c.language, c.start_line, c.end_line, c.code, c.sha, c.embedding, v.distance
 		FROM chunks AS c
 		JOIN vector_quantize_scan('chunks', 'embedding', ?, ?) AS v
 		ON c.rowid = v.rowid
@@ -353,7 +388,7 @@ func (s *Store) FindSimilarChunks(chunkID int64, limit int) ([]*Chunk, error) {
 		chunk := &Chunk{}
 		var embeddingBytes []byte
 		var distance float64
-		err := rows.Scan(&chunk.ID, &chunk.Path, &chunk.Language, &chunk.StartLine, &chunk.EndLine, &chunk.Code, &embeddingBytes, &distance)
+		err := rows.Scan(&chunk.ID, &chunk.Path, &chunk.Language, &chunk.StartLine, &chunk.EndLine, &chunk.Code, &chunk.SHA, &embeddingBytes, &distance)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan chunk: %w", err)
 		}
@@ -383,7 +418,7 @@ func (s *Store) SearchSimilar(embedding []float64, limit int, threshold float64)
 
 	// Use sqlite-vector for similarity search
 	rows, err := s.db.Query(`
-		SELECT c.id, c.path, c.language, c.start_line, c.end_line, c.code, c.embedding, v.distance
+		SELECT c.id, c.path, c.language, c.start_line, c.end_line, c.code, c.sha, c.embedding, v.distance
 		FROM chunks AS c
 		JOIN vector_quantize_scan('chunks', 'embedding', ?, ?) AS v
 		ON c.rowid = v.rowid
@@ -403,7 +438,7 @@ func (s *Store) SearchSimilar(embedding []float64, limit int, threshold float64)
 		chunk := &Chunk{}
 		var embeddingBytes []byte
 		var distance float64
-		err := rows.Scan(&chunk.ID, &chunk.Path, &chunk.Language, &chunk.StartLine, &chunk.EndLine, &chunk.Code, &embeddingBytes, &distance)
+		err := rows.Scan(&chunk.ID, &chunk.Path, &chunk.Language, &chunk.StartLine, &chunk.EndLine, &chunk.Code, &chunk.SHA, &embeddingBytes, &distance)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan chunk: %w", err)
 		}
@@ -661,4 +696,123 @@ func (s *Store) ShouldRefreeze(threshold float64) (bool, float64, error) {
 
 	newChunkRatio := float64(newChunks) / float64(currentCount)
 	return newChunkRatio > threshold, newChunkRatio, nil
+}
+
+// AddIgnore adds a chunk to the ignore list
+func (s *Store) AddIgnore(sha, code string, embedding []float64) error {
+	embeddingBlob := serializeVector(embedding)
+	_, err := s.db.Exec(
+		"INSERT OR IGNORE INTO ignores (sha, code, embedding, created_at) VALUES (?, ?, ?, ?)",
+		sha, code, embeddingBlob, time.Now().Format(time.RFC3339),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to add ignore: %w", err)
+	}
+	return nil
+}
+
+// IsIgnoredBySHA checks if a SHA is in the ignore list
+func (s *Store) IsIgnoredBySHA(sha string) (bool, error) {
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM ignores WHERE sha = ?", sha).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("failed to check ignore: %w", err)
+	}
+	return count > 0, nil
+}
+
+// GetAllIgnores returns all ignored chunks
+func (s *Store) GetAllIgnores() ([]*Chunk, error) {
+	rows, err := s.db.Query(`
+		SELECT sha, code, embedding
+		FROM ignores
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query ignores: %w", err)
+	}
+	defer rows.Close()
+
+	var chunks []*Chunk
+	for rows.Next() {
+		chunk := &Chunk{}
+		var embeddingBytes []byte
+		err := rows.Scan(&chunk.SHA, &chunk.Code, &embeddingBytes)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan ignore: %w", err)
+		}
+
+		if len(embeddingBytes) > 0 {
+			chunk.Embedding = deserializeVector(embeddingBytes)
+		}
+
+		chunks = append(chunks, chunk)
+	}
+
+	return chunks, rows.Err()
+}
+
+// RemoveIgnore removes a chunk from the ignore list by SHA
+func (s *Store) RemoveIgnore(sha string) error {
+	_, err := s.db.Exec("DELETE FROM ignores WHERE sha = ?", sha)
+	if err != nil {
+		return fmt.Errorf("failed to remove ignore: %w", err)
+	}
+	return nil
+}
+
+// CosineSimilarity computes the cosine similarity between two embedding vectors
+func CosineSimilarity(a, b []float64) float64 {
+	if len(a) != len(b) {
+		return 0.0
+	}
+
+	var dotProduct, normA, normB float64
+	for i := range a {
+		dotProduct += a[i] * b[i]
+		normA += a[i] * a[i]
+		normB += b[i] * b[i]
+	}
+
+	if normA == 0 || normB == 0 {
+		return 0.0
+	}
+
+	return dotProduct / (math.Sqrt(normA) * math.Sqrt(normB))
+}
+
+// IsIgnoredBySimilarity checks if a chunk is ignored by SHA or cosine similarity
+// Phase 2: Uses similarity threshold to handle minor code changes
+func (s *Store) IsIgnoredBySimilarity(chunk *Chunk, threshold float64) (bool, error) {
+	// Phase 1: Check exact SHA match
+	exactMatch, err := s.IsIgnoredBySHA(chunk.SHA)
+	if err != nil {
+		return false, err
+	}
+	if exactMatch {
+		return true, nil
+	}
+
+	// Phase 2: Check similarity with all ignored chunks
+	ignoredChunks, err := s.GetAllIgnores()
+	if err != nil {
+		return false, fmt.Errorf("failed to get ignored chunks: %w", err)
+	}
+
+	// If no embedding, can't do similarity check
+	if len(chunk.Embedding) == 0 {
+		return false, nil
+	}
+
+	for _, ignored := range ignoredChunks {
+		if len(ignored.Embedding) == 0 {
+			continue
+		}
+
+		similarity := CosineSimilarity(chunk.Embedding, ignored.Embedding)
+		if similarity >= threshold {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/ZachSnow/redunce/internal/chunker"
 	"github.com/ZachSnow/redunce/internal/cluster"
@@ -46,6 +47,7 @@ func getProgressInterval(total int) int {
 
 type Config struct {
 	Threshold      float64
+	IgnoreThreshold   float64
 	EmbedMethod    string
 	Format         string
 	LocalMinLines  int
@@ -57,6 +59,7 @@ type Config struct {
 	DBPath         string
 	Reset          bool
 	Query          string
+	IgnoreCluster     string
 	PrintIgnore       bool
 	PrintFiles        bool
 	PrintChunks       bool
@@ -73,6 +76,7 @@ func main() {
 	// Define flags
 	flag.BoolVar(&showVersion, "version", false, "show version and exit")
 	flag.Float64Var(&cfg.Threshold, "threshold", 0.85, "similarity threshold (0-1)")
+	flag.Float64Var(&cfg.IgnoreThreshold, "ignore-threshold", 0.95, "ignore similarity threshold (0-1), higher than clustering threshold")
 	flag.StringVar(&cfg.EmbedMethod, "embed", "local", "embedding method: local|openai")
 	flag.StringVar(&cfg.Format, "format", "md", "output format: json|md")
 	flag.IntVar(&cfg.Limit, "limit", 10, "limit output to top N clusters (0 = no limit)")
@@ -85,6 +89,7 @@ func main() {
 	flag.StringVar(&cfg.DBPath, "db", "redunce.db", "database file path")
 	flag.BoolVar(&cfg.Reset, "reset", false, "reset database before running")
 	flag.StringVar(&cfg.Query, "q", "", "search query mode")
+	flag.StringVar(&cfg.IgnoreCluster, "ignore", "", "mark a cluster as ignored by index (1-1000) or cluster ID (SHA)")
 	flag.BoolVar(&cfg.PrintIgnore, "print-ignore", false, "print resolved ignore patterns and exit")
 	flag.BoolVar(&cfg.PrintFiles, "print-files", false, "print scanned files and exit")
 	flag.BoolVar(&cfg.PrintChunks, "print-chunks", false, "print chunks and exit")
@@ -174,6 +179,89 @@ func main() {
 		return
 	}
 
+	// Handle --ignore flag
+	if cfg.IgnoreCluster != "" {
+		// Open database
+		db, err := store.NewStore(cfg.DBPath, false)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
+			os.Exit(1)
+		}
+		defer db.Close()
+
+		var targetChunk *store.Chunk
+
+		// Check if the input is a small integer (cluster index)
+		if clusterIndex, err := strconv.Atoi(cfg.IgnoreCluster); err == nil && clusterIndex > 0 && clusterIndex <= 1000 {
+			// Treat as cluster index - rebuild clusters from existing chunks
+			verbose = cfg.Verbose
+
+			// Find clusters from existing chunks
+			clusters, err := cluster.FindClusters(db, cfg.Threshold, cfg.IgnoreThreshold, false)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: failed to find clusters: %v\n", err)
+				os.Exit(1)
+			}
+
+			if len(clusters) == 0 {
+				fmt.Fprintf(os.Stderr, "Error: no clusters found\n")
+				os.Exit(1)
+			}
+
+			if clusterIndex > len(clusters) {
+				fmt.Fprintf(os.Stderr, "Error: cluster index %d out of range (only %d clusters found)\n", clusterIndex, len(clusters))
+				os.Exit(1)
+			}
+
+			// Use the nth cluster (1-indexed)
+			targetCluster := clusters[clusterIndex-1]
+			targetChunk = targetCluster.CanonicalChunk
+			fmt.Printf("Ignoring cluster %d: %s\n", clusterIndex, store.ShortSHA(targetChunk.SHA))
+		} else {
+			// Treat as SHA (partial or full)
+			chunks, err := db.GetAllChunks()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: failed to get chunks: %v\n", err)
+				os.Exit(1)
+			}
+
+			var matches []*store.Chunk
+			for _, chunk := range chunks {
+				// Match if SHA starts with the provided prefix
+				if len(chunk.SHA) >= len(cfg.IgnoreCluster) &&
+				   chunk.SHA[:len(cfg.IgnoreCluster)] == cfg.IgnoreCluster {
+					matches = append(matches, chunk)
+				}
+			}
+
+			if len(matches) == 0 {
+				fmt.Fprintf(os.Stderr, "Error: cluster ID %s not found\n", cfg.IgnoreCluster)
+				os.Exit(1)
+			}
+
+			if len(matches) > 1 {
+				fmt.Fprintf(os.Stderr, "Error: ambiguous cluster ID %s matches %d clusters:\n", cfg.IgnoreCluster, len(matches))
+				for _, match := range matches {
+					fmt.Fprintf(os.Stderr, "  %s\n", store.ShortSHA(match.SHA))
+				}
+				fmt.Fprintf(os.Stderr, "Please provide a longer prefix.\n")
+				os.Exit(1)
+			}
+
+			targetChunk = matches[0]
+		}
+
+		// Add to ignore list
+		err = db.AddIgnore(targetChunk.SHA, targetChunk.Code, targetChunk.Embedding)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to add ignore: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("Cluster %s has been marked as ignored.\n", store.ShortSHA(targetChunk.SHA))
+		return
+	}
+
 	// If no arguments and no query, print usage
 	if len(args) == 0 && cfg.Query == "" {
 		printUsage()
@@ -255,7 +343,7 @@ func run(cfg Config, paths []string) error {
 
 	// Cluster similar chunks
 	logVerbose("Clustering similar chunks...\n")
-	clusters, err := cluster.FindClusters(db, cfg.Threshold, cfg.Verbose)
+	clusters, err := cluster.FindClusters(db, cfg.Threshold, cfg.IgnoreThreshold, cfg.Verbose)
 	if err != nil {
 		return fmt.Errorf("failed to cluster chunks: %w", err)
 	}
@@ -558,6 +646,45 @@ func processFiles(cfg Config, db *store.Store, files []string, emb embedder.Embe
 		}
 
 		logVerbose("  Embedded and stored %d/%d chunks\n", end, len(chunksToEmbed))
+	}
+
+	// Step 4: If we re-embedded all chunks, also re-embed ignored chunks
+	if shouldReembedAll {
+		ignoredChunks, err := db.GetAllIgnores()
+		if err != nil {
+			return 0, fmt.Errorf("failed to get ignored chunks: %w", err)
+		}
+
+		if len(ignoredChunks) > 0 {
+			logVerbose("Re-embedding %d ignored chunks...\n", len(ignoredChunks))
+
+			for i := 0; i < len(ignoredChunks); i += BatchSize {
+				end := i + BatchSize
+				if end > len(ignoredChunks) {
+					end = len(ignoredChunks)
+				}
+				batch := ignoredChunks[i:end]
+
+				embeddings, err := emb.EmbedBatch(batch)
+				if err != nil {
+					return 0, fmt.Errorf("failed to embed ignored chunks: %w", err)
+				}
+
+				// Update embeddings in the ignores table
+				for j, chunk := range batch {
+					chunk.Embedding = embeddings[j]
+					// Remove and re-add the ignore with new embedding
+					if err := db.RemoveIgnore(chunk.SHA); err != nil {
+						return 0, fmt.Errorf("failed to remove old ignore: %w", err)
+					}
+					if err := db.AddIgnore(chunk.SHA, chunk.Code, chunk.Embedding); err != nil {
+						return 0, fmt.Errorf("failed to update ignored chunk: %w", err)
+					}
+				}
+
+				logVerbose("  Re-embedded %d/%d ignored chunks\n", end, len(ignoredChunks))
+			}
+		}
 	}
 
 	logVerbose("✓ Processing complete\n")

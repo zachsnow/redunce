@@ -28,6 +28,7 @@ func getProgressInterval(total int) int {
 // Cluster represents a group of similar chunks
 type Cluster struct {
 	ID             int64
+	ClusterID      string // SHA of the canonical chunk
 	CanonicalChunk *store.Chunk
 	Chunks         []*store.Chunk
 	AvgSimilarity  float64
@@ -35,7 +36,7 @@ type Cluster struct {
 }
 
 // FindClusters finds clusters of similar chunks
-func FindClusters(db *store.Store, threshold float64, verbose bool) ([]*Cluster, error) {
+func FindClusters(db *store.Store, threshold float64, ignoreThreshold float64, verbose bool) ([]*Cluster, error) {
 	// Delete existing clusters
 	if err := db.DeleteAllClusters(); err != nil {
 		return nil, fmt.Errorf("failed to delete existing clusters: %w", err)
@@ -75,13 +76,22 @@ func FindClusters(db *store.Store, threshold float64, verbose bool) ([]*Cluster,
 			continue
 		}
 
+		// Check if this chunk is ignored (Phase 1: SHA, Phase 2: similarity)
+		ignored, err := db.IsIgnoredBySimilarity(chunk, ignoreThreshold)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check if chunk is ignored: %w", err)
+		}
+		if ignored {
+			continue
+		}
+
 		// Find similar chunks
 		similarChunks, err := db.FindSimilarChunks(chunk.ID, DefaultSimilarChunksLimit)
 		if err != nil {
 			return nil, fmt.Errorf("failed to find similar chunks: %w", err)
 		}
 
-		// Filter by threshold and exclude chunks already in clusters
+		// Filter by threshold and exclude chunks already in clusters or ignored
 		var validSimilar []*store.Chunk
 		for _, similar := range similarChunks {
 			if similar.Similarity >= threshold {
@@ -89,7 +99,16 @@ func FindClusters(db *store.Store, threshold float64, verbose bool) ([]*Cluster,
 				if err != nil {
 					return nil, fmt.Errorf("failed to check if chunk is in cluster: %w", err)
 				}
-				if !inCluster {
+				if inCluster {
+					continue
+				}
+
+				// Check if this similar chunk is ignored (Phase 1: SHA, Phase 2: similarity)
+				ignored, err := db.IsIgnoredBySimilarity(similar, ignoreThreshold)
+				if err != nil {
+					return nil, fmt.Errorf("failed to check if chunk is ignored: %w", err)
+				}
+				if !ignored {
 					validSimilar = append(validSimilar, similar)
 				}
 			}
@@ -131,6 +150,7 @@ func FindClusters(db *store.Store, threshold float64, verbose bool) ([]*Cluster,
 			// Create cluster object
 			cluster := &Cluster{
 				ID:             clusterID,
+				ClusterID:      chunk.SHA, // Use canonical chunk's SHA as cluster ID
 				CanonicalChunk: chunk,
 				Chunks:         clusterChunks,
 				AvgSimilarity:  avgSim,
