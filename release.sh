@@ -155,19 +155,20 @@ fi
 cp "$FORMULA_PATH" "${BACKUP_PATH}"
 
 # Replace the placeholders
+sed -i '' "s/\${VERSION}/${TAG}/" "$FORMULA_PATH"
 sed -i '' "s/\${REDUNCE_SHA256}/${REDUNCE_SHA256}/" "$FORMULA_PATH"
 sed -i '' "s/\${SQLITE_VECTOR_SHA256}/${SQLITE_VECTOR_SHA256}/" "$FORMULA_PATH"
 FORMULA_MODIFIED=true
 
 # Verify replacements
-if grep -q '\${REDUNCE_SHA256}' "$FORMULA_PATH" || grep -q '\${SQLITE_VECTOR_SHA256}' "$FORMULA_PATH"; then
+if grep -q '\${VERSION}' "$FORMULA_PATH" || grep -q '\${REDUNCE_SHA256}' "$FORMULA_PATH" || grep -q '\${SQLITE_VECTOR_SHA256}' "$FORMULA_PATH"; then
     echo -e "${RED}Error: Failed to replace placeholders in ${FORMULA_PATH}${NC}"
     mv "${BACKUP_PATH}" "$FORMULA_PATH"
     FORMULA_MODIFIED=false
     exit 1
 fi
 
-echo "Updated ${FORMULA_PATH} with SHA256 values"
+echo "Updated ${FORMULA_PATH} with version and SHA256 values"
 echo ""
 
 # Step 5: Commit the updated formula
