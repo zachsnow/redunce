@@ -16,6 +16,57 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# State tracking for cleanup
+FORMULA_PATH="Formula/redunce.rb"
+BACKUP_PATH="${FORMULA_PATH}.bak"
+TAG_CREATED=false
+TAG_PUSHED=false
+FORMULA_MODIFIED=false
+FORMULA_COMMITTED=false
+
+# Cleanup function
+cleanup() {
+    local exit_code=$?
+
+    if [ $exit_code -ne 0 ]; then
+        echo ""
+        echo -e "${YELLOW}Cleaning up after error...${NC}"
+
+        # Restore formula backup if it exists
+        if [ -f "$BACKUP_PATH" ]; then
+            echo "Restoring ${FORMULA_PATH} from backup"
+            mv "$BACKUP_PATH" "$FORMULA_PATH"
+        fi
+
+        # Remove local tag if created but not fully committed
+        if [ "$TAG_CREATED" = true ] && [ "$FORMULA_COMMITTED" = false ]; then
+            echo "Removing local tag ${TAG}"
+            git tag -d "$TAG" 2>/dev/null || true
+
+            # If we pushed the tag but didn't finish, warn the user
+            if [ "$TAG_PUSHED" = true ]; then
+                echo -e "${YELLOW}Warning: Tag ${TAG} was pushed to origin but release was not completed${NC}"
+                echo "You may want to delete the remote tag:"
+                echo "  git push origin :refs/tags/${TAG}"
+            fi
+        fi
+
+        # Restore any git changes to the formula
+        if [ "$FORMULA_MODIFIED" = true ] && [ "$FORMULA_COMMITTED" = false ]; then
+            echo "Restoring ${FORMULA_PATH} in git"
+            git checkout -- "$FORMULA_PATH" 2>/dev/null || true
+        fi
+
+        echo -e "${RED}Release failed - cleanup complete${NC}"
+    else
+        # Success - just remove backup if it exists
+        rm -f "$BACKUP_PATH" 2>/dev/null || true
+    fi
+}
+
+# Set up trap to call cleanup on exit, error, or interrupt
+trap cleanup EXIT INT TERM
+
 # Extract version from main.go
 VERSION=$(grep 'Version = ' main.go | sed 's/.*Version = "\(.*\)"/\1/')
 
@@ -26,7 +77,7 @@ fi
 
 TAG="v${VERSION}"
 
-echo -e "${GREEN}=== Redunce Release Script ===${NC}"
+echo -e "${GREEN}=== Redunce Release ===${NC}"
 echo -e "Version: ${YELLOW}${VERSION}${NC}"
 echo -e "Tag: ${YELLOW}${TAG}${NC}"
 echo ""
@@ -42,16 +93,21 @@ fi
 # Check if tag already exists
 if git rev-parse "$TAG" >/dev/null 2>&1; then
     echo -e "${RED}Error: Tag ${TAG} already exists${NC}"
+    echo ""
     echo "To re-release, delete the tag first:"
     echo "  git tag -d ${TAG}"
     echo "  git push origin :refs/tags/${TAG}"
+    echo ""
+    echo "Or update Version in main.go"
     exit 1
 fi
 
 # Step 1: Create and push tag
 echo -e "${GREEN}Step 1: Creating and pushing tag${NC}"
 git tag "$TAG"
+TAG_CREATED=true
 git push origin "$TAG"
+TAG_PUSHED=true
 echo ""
 
 # Wait for GitHub to process the tag
@@ -90,27 +146,27 @@ echo ""
 
 # Step 4: Update the formula
 echo -e "${GREEN}Step 4: Updating Homebrew formula${NC}"
-FORMULA_PATH="Formula/redunce.rb"
 if [ ! -f "$FORMULA_PATH" ]; then
     echo -e "${RED}Error: ${FORMULA_PATH} not found${NC}"
     exit 1
 fi
 
 # Create a backup
-cp "$FORMULA_PATH" "${FORMULA_PATH}.bak"
+cp "$FORMULA_PATH" "${BACKUP_PATH}"
 
 # Replace the placeholders
 sed -i '' "s/\${REDUNCE_SHA256}/${REDUNCE_SHA256}/" "$FORMULA_PATH"
 sed -i '' "s/\${SQLITE_VECTOR_SHA256}/${SQLITE_VECTOR_SHA256}/" "$FORMULA_PATH"
+FORMULA_MODIFIED=true
 
 # Verify replacements
 if grep -q '\${REDUNCE_SHA256}' "$FORMULA_PATH" || grep -q '\${SQLITE_VECTOR_SHA256}' "$FORMULA_PATH"; then
     echo -e "${RED}Error: Failed to replace placeholders in ${FORMULA_PATH}${NC}"
-    mv "${FORMULA_PATH}.bak" "$FORMULA_PATH"
+    mv "${BACKUP_PATH}" "$FORMULA_PATH"
+    FORMULA_MODIFIED=false
     exit 1
 fi
 
-rm "${FORMULA_PATH}.bak"
 echo "Updated ${FORMULA_PATH} with SHA256 values"
 echo ""
 
@@ -119,6 +175,7 @@ echo -e "${GREEN}Step 5: Committing updated formula${NC}"
 git add Formula/redunce.rb
 git commit -m "Update Homebrew formula for ${TAG}"
 git push origin main
+FORMULA_COMMITTED=true
 echo ""
 
 # Step 6: Test the formula
