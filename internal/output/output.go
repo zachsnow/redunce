@@ -6,7 +6,7 @@ import (
 	"io"
 
 	"github.com/ZachSnow/redunce/internal/cluster"
-	"github.com/ZachSnow/redunce/internal/store"
+	"github.com/ZachSnow/redunce/internal/util"
 )
 
 // Formatter formats clusters for output
@@ -46,7 +46,7 @@ func (f *JSONFormatter) Format(w io.Writer, clusters []*cluster.Cluster) error {
 	for _, cl := range clusters {
 		jc := jsonCluster{
 			ID:            cl.ID,
-			ClusterID:     store.ShortSHA(cl.ClusterID),
+			ClusterID:     util.ShortSHA(cl.ClusterID),
 			AvgSimilarity: cl.AvgSimilarity,
 			MaxSimilarity: cl.MaxSimilarity,
 			Size:          len(cl.Chunks),
@@ -96,7 +96,7 @@ func (f *MarkdownFormatter) Format(w io.Writer, clusters []*cluster.Cluster) err
 
 	for i, cl := range clusters {
 		fmt.Fprintf(w, "## Cluster %d\n\n", i+1)
-		fmt.Fprintf(w, "- **Cluster ID**: `%s`\n", store.ShortSHA(cl.ClusterID))
+		fmt.Fprintf(w, "- **Cluster ID**: `%s`\n", util.ShortSHA(cl.ClusterID))
 		fmt.Fprintf(w, "- **Size**: %d chunks\n", len(cl.Chunks))
 		fmt.Fprintf(w, "- **Average Similarity**: %.2f%%\n", cl.AvgSimilarity*100)
 		fmt.Fprintf(w, "- **Max Similarity**: %.2f%%\n\n", cl.MaxSimilarity*100)

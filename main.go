@@ -13,6 +13,7 @@ import (
 	"github.com/ZachSnow/redunce/internal/output"
 	"github.com/ZachSnow/redunce/internal/scanner"
 	"github.com/ZachSnow/redunce/internal/store"
+	"github.com/ZachSnow/redunce/internal/util"
 )
 
 const (
@@ -31,18 +32,6 @@ func logVerbose(format string, args ...interface{}) {
 	if verbose {
 		fmt.Fprintf(os.Stderr, format, args...)
 	}
-}
-
-// getProgressInterval calculates an appropriate progress reporting interval
-func getProgressInterval(total int) int {
-	interval := total / 10
-	if interval > 100 {
-		return 100
-	}
-	if interval < 1 {
-		return 1
-	}
-	return interval
 }
 
 type Config struct {
@@ -216,7 +205,7 @@ func main() {
 			// Use the nth cluster (1-indexed)
 			targetCluster := clusters[clusterIndex-1]
 			targetChunk = targetCluster.CanonicalChunk
-			fmt.Printf("Ignoring cluster %d: %s\n", clusterIndex, store.ShortSHA(targetChunk.SHA))
+			fmt.Printf("Ignoring cluster %d: %s\n", clusterIndex, util.ShortSHA(targetChunk.SHA))
 		} else {
 			// Treat as SHA (partial or full)
 			chunks, err := db.GetAllChunks()
@@ -242,7 +231,7 @@ func main() {
 			if len(matches) > 1 {
 				fmt.Fprintf(os.Stderr, "Error: ambiguous cluster ID %s matches %d clusters:\n", cfg.IgnoreCluster, len(matches))
 				for _, match := range matches {
-					fmt.Fprintf(os.Stderr, "  %s\n", store.ShortSHA(match.SHA))
+					fmt.Fprintf(os.Stderr, "  %s\n", util.ShortSHA(match.SHA))
 				}
 				fmt.Fprintf(os.Stderr, "Please provide a longer prefix.\n")
 				os.Exit(1)
@@ -258,7 +247,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		fmt.Printf("Cluster %s has been marked as ignored.\n", store.ShortSHA(targetChunk.SHA))
+		fmt.Printf("Cluster %s has been marked as ignored.\n", util.ShortSHA(targetChunk.SHA))
 		return
 	}
 

@@ -6,24 +6,13 @@ import (
 	"sort"
 
 	"github.com/ZachSnow/redunce/internal/store"
+	"github.com/ZachSnow/redunce/internal/util"
 )
 
 const (
 	// DefaultSimilarChunksLimit is the default maximum number of similar chunks to find per chunk
 	DefaultSimilarChunksLimit = 10
 )
-
-// getProgressInterval calculates an appropriate progress reporting interval
-func getProgressInterval(total int) int {
-	interval := total / 10
-	if interval > 100 {
-		return 100
-	}
-	if interval < 1 {
-		return 1
-	}
-	return interval
-}
 
 // Cluster represents a group of similar chunks
 type Cluster struct {
@@ -56,7 +45,7 @@ func FindClusters(db *store.Store, threshold float64, ignoreThreshold float64, v
 	var clusters []*Cluster
 	totalChunks := len(chunks)
 	processed := 0
-	progressInterval := getProgressInterval(totalChunks)
+	progressInterval := util.GetProgressInterval(totalChunks)
 
 	// Process each chunk
 	for _, chunk := range chunks {

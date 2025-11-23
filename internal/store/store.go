@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mattn/go-sqlite3"
+	"github.com/ZachSnow/redunce/internal/util"
 )
 
 func init() {
@@ -71,14 +72,6 @@ func ComputeChunkSHA(code string) string {
 	h := sha1.New()
 	h.Write([]byte(code))
 	return hex.EncodeToString(h.Sum(nil))
-}
-
-// ShortSHA returns the first 8 characters of a SHA (like git)
-func ShortSHA(sha string) string {
-	if len(sha) <= 8 {
-		return sha
-	}
-	return sha[:8]
 }
 
 // NewStore creates a new store and initializes the database
@@ -760,26 +753,6 @@ func (s *Store) RemoveIgnore(sha string) error {
 	return nil
 }
 
-// CosineSimilarity computes the cosine similarity between two embedding vectors
-func CosineSimilarity(a, b []float64) float64 {
-	if len(a) != len(b) {
-		return 0.0
-	}
-
-	var dotProduct, normA, normB float64
-	for i := range a {
-		dotProduct += a[i] * b[i]
-		normA += a[i] * a[i]
-		normB += b[i] * b[i]
-	}
-
-	if normA == 0 || normB == 0 {
-		return 0.0
-	}
-
-	return dotProduct / (math.Sqrt(normA) * math.Sqrt(normB))
-}
-
 // IsIgnoredBySimilarity checks if a chunk is ignored by SHA or cosine similarity
 // Phase 2: Uses similarity threshold to handle minor code changes
 func (s *Store) IsIgnoredBySimilarity(chunk *Chunk, threshold float64) (bool, error) {
@@ -808,7 +781,7 @@ func (s *Store) IsIgnoredBySimilarity(chunk *Chunk, threshold float64) (bool, er
 			continue
 		}
 
-		similarity := CosineSimilarity(chunk.Embedding, ignored.Embedding)
+		similarity := util.CosineSimilarity(chunk.Embedding, ignored.Embedding)
 		if similarity >= threshold {
 			return true, nil
 		}
