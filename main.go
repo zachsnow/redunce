@@ -52,6 +52,9 @@ type Config struct {
 	PrintIgnore       bool
 	PrintFiles        bool
 	PrintChunks       bool
+	PrintChunk        string
+	PrintCluster      string
+	MinChunkLength    int
 	Verbose           bool
 	LocalRefreezeThreshold float64
 	LocalRefreeze          bool
@@ -74,6 +77,7 @@ func main() {
 	flag.IntVar(&cfg.LocalStepLines, "local-step-lines", 3, "line step size for local chunker")
 	flag.IntVar(&cfg.TreesitterMin, "treesitter-min", 5, "minimum node size for tree-sitter")
 	flag.IntVar(&cfg.TreesitterMax, "treesitter-max", 10, "maximum node size for tree-sitter")
+	flag.IntVar(&cfg.MinChunkLength, "min-chunk-length", 0, "minimum chunk length in lines (0 = no filter, also overrides local-min-lines)")
 	flag.StringVar(&cfg.OpenAIAPIKey, "openai-api-key", "", "OpenAI API key (or set OPENAI_API_KEY env var)")
 	flag.StringVar(&cfg.DBPath, "db", "redunce.db", "database file path")
 	flag.BoolVar(&cfg.Reset, "reset", false, "reset database before running")
@@ -82,6 +86,8 @@ func main() {
 	flag.BoolVar(&cfg.PrintIgnore, "print-ignore", false, "print resolved ignore patterns and exit")
 	flag.BoolVar(&cfg.PrintFiles, "print-files", false, "print scanned files and exit")
 	flag.BoolVar(&cfg.PrintChunks, "print-chunks", false, "print chunks and exit")
+	flag.StringVar(&cfg.PrintChunk, "print-chunk", "", "print a specific chunk by SHA (partial or full) and exit")
+	flag.StringVar(&cfg.PrintCluster, "print-cluster", "", "print a specific cluster by cluster ID (partial or full) and exit")
 	flag.BoolVar(&cfg.Verbose, "verbose", false, "enable verbose progress output")
 	flag.Float64Var(&cfg.LocalRefreezeThreshold, "refreeze-threshold", 0.20, "auto-refreeze vocabulary when new chunks exceed this fraction of corpus (0.0-1.0)")
 	flag.BoolVar(&cfg.LocalRefreeze, "refreeze", false, "manually trigger vocabulary refreeze and re-embed all chunks")
@@ -251,6 +257,110 @@ func main() {
 		return
 	}
 
+	// Handle --print-chunk flag
+	if cfg.PrintChunk != "" {
+		db, err := store.NewStore(cfg.DBPath, false)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
+			os.Exit(1)
+		}
+		defer db.Close()
+
+		chunks, err := db.GetAllChunks()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to get chunks: %v\n", err)
+			os.Exit(1)
+		}
+
+		var matches []*store.Chunk
+		for _, chunk := range chunks {
+			if len(chunk.SHA) >= len(cfg.PrintChunk) &&
+			   chunk.SHA[:len(cfg.PrintChunk)] == cfg.PrintChunk {
+				matches = append(matches, chunk)
+			}
+		}
+
+		if len(matches) == 0 {
+			fmt.Fprintf(os.Stderr, "Error: chunk %s not found\n", cfg.PrintChunk)
+			os.Exit(1)
+		}
+
+		if len(matches) > 1 {
+			fmt.Fprintf(os.Stderr, "Error: ambiguous chunk ID %s matches %d chunks:\n", cfg.PrintChunk, len(matches))
+			for _, match := range matches {
+				fmt.Fprintf(os.Stderr, "  %s (%s:%d-%d)\n", util.ShortSHA(match.SHA), match.Path, match.StartLine, match.EndLine)
+			}
+			fmt.Fprintf(os.Stderr, "Please provide a longer prefix.\n")
+			os.Exit(1)
+		}
+
+		chunk := matches[0]
+		fmt.Printf("# Chunk: %s\n\n", util.ShortSHA(chunk.SHA))
+		fmt.Printf("**Path**: `%s`  \n", chunk.Path)
+		fmt.Printf("**Language**: %s  \n", chunk.Language)
+		fmt.Printf("**Lines**: %d-%d\n\n", chunk.StartLine, chunk.EndLine)
+		fmt.Printf("```%s\n%s\n```\n", chunk.Language, chunk.Code)
+		return
+	}
+
+	// Handle --print-cluster flag
+	if cfg.PrintCluster != "" {
+		db, err := store.NewStore(cfg.DBPath, false)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
+			os.Exit(1)
+		}
+		defer db.Close()
+
+		verbose = cfg.Verbose
+		clusters, err := cluster.FindClusters(db, cfg.Threshold, cfg.IgnoreThreshold, false)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to find clusters: %v\n", err)
+			os.Exit(1)
+		}
+
+		if len(clusters) == 0 {
+			fmt.Fprintf(os.Stderr, "Error: no clusters found\n")
+			os.Exit(1)
+		}
+
+		var matches []*cluster.Cluster
+		for _, cl := range clusters {
+			clusterID := cl.ClusterID
+			if len(clusterID) >= len(cfg.PrintCluster) &&
+			   clusterID[:len(cfg.PrintCluster)] == cfg.PrintCluster {
+				matches = append(matches, cl)
+			}
+		}
+
+		if len(matches) == 0 {
+			fmt.Fprintf(os.Stderr, "Error: cluster %s not found\n", cfg.PrintCluster)
+			os.Exit(1)
+		}
+
+		if len(matches) > 1 {
+			fmt.Fprintf(os.Stderr, "Error: ambiguous cluster ID %s matches %d clusters:\n", cfg.PrintCluster, len(matches))
+			for _, match := range matches {
+				fmt.Fprintf(os.Stderr, "  %s\n", util.ShortSHA(match.ClusterID))
+			}
+			fmt.Fprintf(os.Stderr, "Please provide a longer prefix.\n")
+			os.Exit(1)
+		}
+
+		formatter, err := createFormatter(cfg.Format)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		err = formatter.Format(os.Stdout, matches)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to format output: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// If no arguments and no query, print usage
 	if len(args) == 0 && cfg.Query == "" {
 		printUsage()
@@ -359,6 +469,12 @@ func chunkFile(cfg Config, path string) ([]*store.Chunk, error) {
 	ext := filepath.Ext(path)
 	lang := chunker.LanguageFromExtension(ext)
 
+	// Apply min-chunk-length override to local-min-lines if set
+	minLines := cfg.LocalMinLines
+	if cfg.MinChunkLength > 0 {
+		minLines = cfg.MinChunkLength
+	}
+
 	// Use tree-sitter for supported languages
 	// If tree-sitter parsing fails, we return the error (no fallback)
 	if lang != "" {
@@ -366,13 +482,26 @@ func chunkFile(cfg Config, path string) ([]*store.Chunk, error) {
 		if err != nil {
 			return nil, fmt.Errorf("tree-sitter chunking failed for %s: %w", lang, err)
 		}
+
+		// Filter chunks by minimum length if specified
+		if cfg.MinChunkLength > 0 {
+			filtered := make([]*store.Chunk, 0, len(chunks))
+			for _, chunk := range chunks {
+				lineCount := chunk.EndLine - chunk.StartLine + 1
+				if lineCount >= cfg.MinChunkLength {
+					filtered = append(filtered, chunk)
+				}
+			}
+			return filtered, nil
+		}
+
 		return chunks, nil
 	}
 
 	// Use line-based chunker only for file types we don't have tree-sitter support for
 	// This is expected behavior for unsupported extensions
 	logVerbose("  Using line-based chunking (no tree-sitter parser for %s)\n", ext)
-	return chunker.ChunkByLines(path, cfg.LocalMinLines, cfg.LocalMaxLines, cfg.LocalStepLines)
+	return chunker.ChunkByLines(path, minLines, cfg.LocalMaxLines, cfg.LocalStepLines)
 }
 
 func handleQuery(cfg Config, db *store.Store) error {
@@ -693,7 +822,10 @@ func printUsage() {
 	fmt.Println("Examples:")
 	fmt.Printf("  %s ./src\n", binName)
 	fmt.Printf("  %s --threshold 0.9 --format json ./\n", binName)
+	fmt.Printf("  %s --min-chunk-length 5 ./\n", binName)
 	fmt.Printf("  %s -q \"error handling\" --format md\n", binName)
+	fmt.Printf("  %s --print-chunk a6adf109\n", binName)
+	fmt.Printf("  %s --print-cluster 1accbc96\n", binName)
 	fmt.Println()
 	fmt.Println("LLM-Assisted Iterative Workflow:")
 	fmt.Println("  Use redunce with an LLM (like Claude) to systematically eliminate redundancy:")

@@ -281,24 +281,20 @@ func deserializeVector(data []byte) []float64 {
 }
 
 // GetAllChunks returns all chunks ordered by code length descending
-func (s *Store) GetAllChunks() ([]*Chunk, error) {
-	rows, err := s.db.Query(`
-		SELECT id, path, language, start_line, end_line, code, sha, embedding
-		FROM chunks
-		ORDER BY LENGTH(code) DESC
-	`)
+// queryChunks is a generic helper for querying chunks with custom scanning logic
+func (s *Store) queryChunks(query string, errorPrefix string, scanFunc func(*sql.Rows, *Chunk) ([]byte, error)) ([]*Chunk, error) {
+	rows, err := s.db.Query(query)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query chunks: %w", err)
+		return nil, fmt.Errorf("%s: %w", errorPrefix, err)
 	}
 	defer rows.Close()
 
 	var chunks []*Chunk
 	for rows.Next() {
 		chunk := &Chunk{}
-		var embeddingBytes []byte
-		err := rows.Scan(&chunk.ID, &chunk.Path, &chunk.Language, &chunk.StartLine, &chunk.EndLine, &chunk.Code, &chunk.SHA, &embeddingBytes)
+		embeddingBytes, err := scanFunc(rows, chunk)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan chunk: %w", err)
+			return nil, fmt.Errorf("%s: %w", errorPrefix, err)
 		}
 
 		if len(embeddingBytes) > 0 {
@@ -309,6 +305,18 @@ func (s *Store) GetAllChunks() ([]*Chunk, error) {
 	}
 
 	return chunks, rows.Err()
+}
+
+func (s *Store) GetAllChunks() ([]*Chunk, error) {
+	return s.queryChunks(`
+		SELECT id, path, language, start_line, end_line, code, sha, embedding
+		FROM chunks
+		ORDER BY LENGTH(code) DESC
+	`, "failed to query chunks", func(rows *sql.Rows, chunk *Chunk) ([]byte, error) {
+		var embeddingBytes []byte
+		err := rows.Scan(&chunk.ID, &chunk.Path, &chunk.Language, &chunk.StartLine, &chunk.EndLine, &chunk.Code, &chunk.SHA, &embeddingBytes)
+		return embeddingBytes, err
+	})
 }
 
 // GetChunkByID retrieves a chunk by its ID
@@ -716,32 +724,14 @@ func (s *Store) IsIgnoredBySHA(sha string) (bool, error) {
 
 // GetAllIgnores returns all ignored chunks
 func (s *Store) GetAllIgnores() ([]*Chunk, error) {
-	rows, err := s.db.Query(`
+	return s.queryChunks(`
 		SELECT sha, code, embedding
 		FROM ignores
-	`)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query ignores: %w", err)
-	}
-	defer rows.Close()
-
-	var chunks []*Chunk
-	for rows.Next() {
-		chunk := &Chunk{}
+	`, "failed to query ignores", func(rows *sql.Rows, chunk *Chunk) ([]byte, error) {
 		var embeddingBytes []byte
 		err := rows.Scan(&chunk.SHA, &chunk.Code, &embeddingBytes)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan ignore: %w", err)
-		}
-
-		if len(embeddingBytes) > 0 {
-			chunk.Embedding = deserializeVector(embeddingBytes)
-		}
-
-		chunks = append(chunks, chunk)
-	}
-
-	return chunks, rows.Err()
+		return embeddingBytes, err
+	})
 }
 
 // RemoveIgnore removes a chunk from the ignore list by SHA
