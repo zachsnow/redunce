@@ -1,0 +1,66 @@
+# Default global redunce ignore patterns
+# This file is installed by Homebrew to $(brew --prefix)/etc/redunce/ignore
+#
+# To customize, copy to one of these locations:
+#   ~/.config/redunce/ignore  (recommended, XDG-compliant)
+#   ~/.redunceignore          (alternative, simpler)
+#
+# Later files can override patterns from earlier files using !pattern syntax.
+# See: https://git-scm.com/docs/gitignore
+
+# Binary files
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.o
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Media files
+*.pdf
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.ico
+*.mp3
+*.mp4
+*.avi
+*.mov
+
+# Fonts
+*.ttf
+*.woff
+*.woff2
+*.eot
+
+# Archives
+*.zip
+*.tar
+*.gz
+*.rar
+*.7z
+
+# Package manager lock files
+go.sum
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+Cargo.lock
+Gemfile.lock
+composer.lock
+Pipfile.lock
+poetry.lock
+
+# Build/config files
+go.mod
+package.json
+requirements.txt
+Makefile
+Dockerfile

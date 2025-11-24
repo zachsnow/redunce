@@ -9,6 +9,7 @@ require (
 )
 
 require (
+	github.com/danwakefield/fnmatch v0.0.0-20160403171240-cbb64ac3d964 // indirect
 	github.com/go-enry/go-oniguruma v1.2.1 // indirect
 	github.com/stretchr/testify v1.10.0 // indirect
 	github.com/tree-sitter/tree-sitter-json v0.24.8 // indirect

@@ -121,12 +121,52 @@ func parseIgnorePatterns(content string) []string {
 	return patterns
 }
 
-// GetResolvedIgnorePatterns returns the combined ignore patterns (default + gitignore + redunceignore)
+// getGlobalIgnorePaths returns paths to check for global ignore files, in order of precedence
+func getGlobalIgnorePaths() []string {
+	var paths []string
+
+	// System-wide locations (Homebrew)
+	// Check common Homebrew prefixes
+	for _, prefix := range []string{"/opt/homebrew", "/usr/local", "/home/linuxbrew/.linuxbrew"} {
+		systemPath := filepath.Join(prefix, "etc", "redunce", "ignore")
+		paths = append(paths, systemPath)
+	}
+
+	// User global locations (XDG and simple fallback)
+	homeDir, err := os.UserHomeDir()
+	if err == nil {
+		// XDG Base Directory spec (preferred)
+		xdgConfig := os.Getenv("XDG_CONFIG_HOME")
+		if xdgConfig == "" {
+			xdgConfig = filepath.Join(homeDir, ".config")
+		}
+		paths = append(paths, filepath.Join(xdgConfig, "redunce", "ignore"))
+
+		// Simple fallback (like git's global gitignore)
+		paths = append(paths, filepath.Join(homeDir, ".redunceignore"))
+	}
+
+	return paths
+}
+
+// GetResolvedIgnorePatterns returns the combined ignore patterns from all sources
+// Order (least to most specific): hardcoded defaults -> system -> global -> project .gitignore -> project .redunceignore
 func GetResolvedIgnorePatterns(baseDir string) ([]string, error) {
-	// Start with default patterns
+	// Start with hardcoded default patterns
 	patterns := parseIgnorePatterns(defaultRedunceignore)
 
-	// Add .gitignore patterns
+	// Add global ignore files (system-wide, then user-specific)
+	for _, globalPath := range getGlobalIgnorePaths() {
+		globalPatterns, err := loadIgnoreFile(globalPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load global ignore file %s: %w", globalPath, err)
+		}
+		if len(globalPatterns) > 0 {
+			patterns = append(patterns, globalPatterns...)
+		}
+	}
+
+	// Add project .gitignore patterns
 	gitignorePath := filepath.Join(baseDir, ".gitignore")
 	gitignorePatterns, err := loadIgnoreFile(gitignorePath)
 	if err != nil {
@@ -134,7 +174,7 @@ func GetResolvedIgnorePatterns(baseDir string) ([]string, error) {
 	}
 	patterns = append(patterns, gitignorePatterns...)
 
-	// Add .redunceignore patterns (these come last so they can override)
+	// Add project .redunceignore patterns (these come last so they can override everything)
 	redunceignorePath := filepath.Join(baseDir, ".redunceignore")
 	redunceignorePatterns, err := loadIgnoreFile(redunceignorePath)
 	if err != nil {
@@ -190,10 +230,11 @@ func ScanPaths(paths []string) ([]string, error) {
 		}
 
 		if info.IsDir() {
-			// Get resolved ignore patterns (default + .gitignore + .redunceignore)
-			allPatterns, err := GetResolvedIgnorePatterns(absPath)
+			// Create gitignore matcher for this directory tree
+			// Checks both .redunceignore and .gitignore at each level
+			matcher, err := NewIgnoreMatcher(absPath)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("failed to create ignore matcher: %w", err)
 			}
 
 			// Walk directory
@@ -202,13 +243,24 @@ func ScanPaths(paths []string) ([]string, error) {
 					return err
 				}
 
-				// Skip if matching ignore patterns (works for both files and directories)
-				ignored, _ := matchesIgnorePatterns(path, absPath, allPatterns)
-				if ignored {
-					if info.IsDir() {
-						return filepath.SkipDir
+				// Check ignore patterns
+				var explicitlyIncluded bool
+				if matcher != nil {
+					match := matcher.Match(path)
+					if match != nil {
+						if match.Ignore() {
+							// Matched a positive ignore pattern - skip this file/directory
+							if info.IsDir() {
+								return filepath.SkipDir
+							}
+							return nil
+						}
+						if match.Include() {
+							// Matched a negation pattern (!pattern) - explicitly include
+							// This bypasses go-enry filtering below
+							explicitlyIncluded = true
+						}
 					}
-					return nil
 				}
 
 				// Continue walking into directories
@@ -226,16 +278,19 @@ func ScanPaths(paths []string) ([]string, error) {
 					return nil
 				}
 
-				// Read file content for enry analysis
-				content, err := os.ReadFile(path)
-				if err != nil {
-					// If we can't read it, skip it
-					return nil
-				}
+				// If explicitly included by negation pattern, bypass enry filter
+				if !explicitlyIncluded {
+					// Read file content for enry analysis
+					content, err := os.ReadFile(path)
+					if err != nil {
+						// If we can't read it, skip it
+						return nil
+					}
 
-				// Use enry to determine if we should analyze this file
-				if !shouldAnalyzeFile(path, content) {
-					return nil
+					// Use enry to determine if we should analyze this file
+					if !shouldAnalyzeFile(path, content) {
+						return nil
+					}
 				}
 
 				// Add file

@@ -28,6 +28,9 @@ class Redunce < Formula
     # Build redunce with CGO enabled for SQLite extension loading
     ENV["CGO_CFLAGS"] = "-DSQLITE_ENABLE_LOAD_EXTENSION=1"
     system "go", "build", *std_go_args(ldflags: "-s -w")
+
+    # Install default global ignore file
+    etc.install "redunceignore.default" => "redunce/ignore"
   end
 
   def caveats
@@ -35,7 +38,23 @@ class Redunce < Formula
       The sqlite-vector extension has been installed to:
         #{lib}/libvector.dylib
 
-      redunce will automatically find it in Homebrew's library path.
+      A default global ignore file has been installed to:
+        #{etc}/redunce/ignore
+
+      To customize ignore patterns, copy it to one of these locations:
+        ~/.config/redunce/ignore  (recommended, XDG-compliant)
+        ~/.redunceignore          (alternative, simpler)
+
+      Ignore files are combined in order: system -> global -> project
+      Use !pattern in later files to un-ignore patterns from earlier files.
+
+      Claude Code Integration:
+        To install Claude Code slash commands:
+          redunce --install-claude-commands      # User-level (all projects)
+          redunce --install-claude-commands .    # Project-level (this project only)
+
+        This installs /redunce and /redunce-approve commands for interactive
+        and auto-approve code deduplication workflows.
     EOS
   end
 

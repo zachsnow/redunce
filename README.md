@@ -33,6 +33,52 @@ Specific options for particular components:
   --db <file> : the location of the database file; defaults to redunce.db in the working directory
 ```
 
+## Claude Code Integration
+
+`redunce` includes built-in slash commands for [Claude Code](https://claude.ai/claude-code), making it easy to systematically eliminate code duplication using an AI-assisted workflow.
+
+### Installation
+
+After installing `redunce`, run:
+
+```bash
+# User-level installation (available in all projects)
+redunce --install-claude-commands
+
+# Project-level installation (available only in current project)
+redunce --install-claude-commands .
+```
+
+This installs two slash commands:
+- `/redunce` - Interactive mode with approval at each step
+- `/redunce-approve` - Auto-approve mode for autonomous refactoring
+
+**User-level vs Project-level:**
+- **User-level** (`~/.claude/commands/`) - Commands available in any project where you use Claude Code
+- **Project-level** (`./.claude/commands/`) - Commands only available when working in this specific project
+
+Use user-level for general availability, or project-level if you want project-specific customization.
+
+### Using the Commands
+
+In any project, simply type `/redunce` or `/redunce-approve` in Claude Code, and Claude will:
+
+1. **Set up `.redunceignore`** - Automatically identify and add patterns for test files, generated code, etc.
+2. **Run iterative analysis** - Execute `redunce . -limit 10` to find duplication clusters
+3. **Evaluate clusters** - For each cluster, decide whether to:
+   - Add it to `.redunceignore` (intentional duplication)
+   - Refactor it to eliminate duplication (preferring changes that reduce code size)
+4. **Apply changes** - In approve mode, changes are automatic; in interactive mode, Claude asks for approval
+5. **Repeat** - Continue for 3-5 iterations or until no progress is made
+6. **Check in** - Ask if you want to continue
+
+### Interactive vs Auto-Approve
+
+- **`/redunce`** - Best for learning the tool or when you want full control over each decision
+- **`/redunce-approve`** - Best for trusted codebases where you want Claude to work autonomously (it will still run tests and revert if they fail)
+
+For more details, see `.claude/README.md` in this repository.
+
 ## .redunceignore
 
 You can create a `.redunceignore` file in your project root to exclude specific files or directories from analysis.

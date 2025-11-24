@@ -1,6 +1,7 @@
 package main
 
 import (
+	"embed"
 	"flag"
 	"fmt"
 	"os"
@@ -15,6 +16,9 @@ import (
 	"github.com/ZachSnow/redunce/internal/store"
 	"github.com/ZachSnow/redunce/internal/util"
 )
+
+//go:embed .claude/commands/*.md
+var claudeCommands embed.FS
 
 const (
 	// BatchSize is the number of chunks to process in one batch
@@ -64,9 +68,11 @@ type Config struct {
 func main() {
 	cfg := Config{}
 	var showVersion bool
+	var installClaudeCommands bool
 
 	// Define flags
 	flag.BoolVar(&showVersion, "version", false, "show version and exit")
+	flag.BoolVar(&installClaudeCommands, "install-claude-commands", false, "install Claude Code slash commands (usage: --install-claude-commands [directory], defaults to ~)")
 	flag.Float64Var(&cfg.Threshold, "threshold", 0.85, "similarity threshold (0-1)")
 	flag.Float64Var(&cfg.IgnoreThreshold, "ignore-threshold", 0.95, "ignore similarity threshold (0-1), higher than clustering threshold")
 	flag.StringVar(&cfg.EmbedMethod, "embed", "local", "embedding method: local|openai")
@@ -102,6 +108,21 @@ func main() {
 
 	// Get remaining arguments as files/directories
 	args := flag.Args()
+
+	// Handle install-claude-commands flag
+	if installClaudeCommands {
+		// Check if a directory was provided as an argument
+		targetDir := "~"
+		if len(args) > 0 {
+			targetDir = args[0]
+		}
+
+		if err := installClaudeCommandsToDir(targetDir); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to install Claude commands: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	if cfg.PrintIgnore {
 		// Use current directory if no args provided
 		baseDir := "."
@@ -118,7 +139,8 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: failed to get ignore patterns: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Println("# Resolved ignore patterns (default + .gitignore + .redunceignore)")
+		fmt.Println("# Resolved ignore patterns (combined from all sources)")
+		fmt.Println("# Order: hardcoded defaults -> system -> global -> .gitignore -> .redunceignore")
 		fmt.Printf("# Base directory: %s\n\n", absDir)
 		for _, pattern := range patterns {
 			fmt.Println(pattern)
@@ -809,6 +831,84 @@ func processFiles(cfg Config, db *store.Store, files []string, emb embedder.Embe
 	return len(allNewChunks), nil
 }
 
+func installClaudeCommandsToDir(baseDir string) error {
+	// Expand ~ to home directory
+	if baseDir == "~" || baseDir == "" {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("failed to get home directory: %w", err)
+		}
+		baseDir = homeDir
+	}
+
+	// Convert to absolute path
+	absBaseDir, err := filepath.Abs(baseDir)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute path: %w", err)
+	}
+
+	// Create <baseDir>/.claude/commands directory
+	targetDir := filepath.Join(absBaseDir, ".claude", "commands")
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory %s: %w", targetDir, err)
+	}
+
+	// Read embedded command files
+	entries, err := claudeCommands.ReadDir(".claude/commands")
+	if err != nil {
+		return fmt.Errorf("failed to read embedded commands: %w", err)
+	}
+
+	installed := 0
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		filename := entry.Name()
+		sourcePath := filepath.Join(".claude/commands", filename)
+		targetPath := filepath.Join(targetDir, filename)
+
+		// Read embedded file
+		content, err := claudeCommands.ReadFile(sourcePath)
+		if err != nil {
+			return fmt.Errorf("failed to read embedded file %s: %w", filename, err)
+		}
+
+		// Write to target
+		if err := os.WriteFile(targetPath, content, 0644); err != nil {
+			return fmt.Errorf("failed to write %s: %w", targetPath, err)
+		}
+
+		fmt.Printf("Installed: %s\n", targetPath)
+		installed++
+	}
+
+	if installed == 0 {
+		return fmt.Errorf("no command files found")
+	}
+
+	// Determine scope for user message
+	homeDir, _ := os.UserHomeDir()
+	isUserLevel := targetDir == filepath.Join(homeDir, ".claude", "commands")
+
+	scope := "project"
+	availability := "in this project"
+	if isUserLevel {
+		scope = "user-level"
+		availability = "in any project"
+	}
+
+	fmt.Printf("\n✓ Successfully installed %d Claude Code command(s) to %s\n", installed, targetDir)
+	fmt.Printf("  Scope: %s (%s)\n", scope, availability)
+	fmt.Println("\nAvailable commands:")
+	fmt.Println("  /redunce         - Interactive mode with approval at each step")
+	fmt.Println("  /redunce-approve - Auto-approve mode for autonomous refactoring")
+	fmt.Println("\nFor more information, see: https://github.com/ZachSnow/redunce")
+
+	return nil
+}
+
 func printUsage() {
 	binName := filepath.Base(os.Args[0])
 	fmt.Println("REDUNCE - Find potentially redundant code")
@@ -826,6 +926,15 @@ func printUsage() {
 	fmt.Printf("  %s -q \"error handling\" --format md\n", binName)
 	fmt.Printf("  %s --print-chunk a6adf109\n", binName)
 	fmt.Printf("  %s --print-cluster 1accbc96\n", binName)
+	fmt.Println()
+	fmt.Println("Claude Code Integration:")
+	fmt.Println("  Install Claude Code slash commands:")
+	fmt.Printf("     $ %s --install-claude-commands      # Install to ~ (user-level, all projects)\n", binName)
+	fmt.Printf("     $ %s --install-claude-commands .    # Install to . (project-level, this project only)\n", binName)
+	fmt.Println()
+	fmt.Println("  Then use in Claude Code:")
+	fmt.Println("     /redunce          # Interactive mode with approval at each step")
+	fmt.Println("     /redunce-approve  # Auto-approve mode for autonomous refactoring")
 	fmt.Println()
 	fmt.Println("LLM-Assisted Iterative Workflow:")
 	fmt.Println("  Use redunce with an LLM (like Claude) to systematically eliminate redundancy:")
