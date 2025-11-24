@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go mod init:*)",
+      "Bash(go get:*)",
+      "Bash(go build:*)",
+      "Bash(./redunce:*)",
+      "Bash(printf:*)",
+      "Bash(sqlite3:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(go list:*)",
+      "Bash(curl:*)",
+      "Bash(go mod tidy:*)",
+      "Bash(CGO_CFLAGS=\"-DSQLITE_ENABLE_LOAD_EXTENSION=1\" go build:*)",
+      "Bash(codesign:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(nm:*)",
+      "WebFetch(domain:pkg.go.dev)",
+      "Bash(test:*)",
+      "Bash(cat:*)",
+      "Bash(chmod:*)",
+      "Bash(./build.sh)",
+      "Bash(./clean.sh)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(tree:*)",
+      "Bash(go doc:*)",
+      "Bash(for pkg in bash c cpp python swift)",
+      "Bash(do echo \"=== $pkg ===\")",
+      "Bash(done)",
+      "WebSearch",
+      "Bash(bash:*)",
+      "Bash(/dev/null)",
+      "Bash(git clone:*)",
+      "Bash(./test_ignore.sh)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

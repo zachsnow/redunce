@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"bufio"
+	_ "embed"
 	"fmt"
 	"io"
 	"os"
@@ -12,99 +13,8 @@ import (
 	"github.com/go-enry/go-enry/v2"
 )
 
-// Default ignore patterns - these are always applied before user's .redunceignore
-const defaultRedunceignore = `# Default redunce ignore patterns
-# Users can override these with ! in their .redunceignore
-
-# Binary files
-*.exe
-*.dll
-*.so
-*.dylib
-*.a
-*.o
-
-# Database files
-*.db
-*.sqlite
-*.sqlite3
-
-# Media files
-*.pdf
-*.jpg
-*.jpeg
-*.png
-*.gif
-*.bmp
-*.ico
-*.mp3
-*.mp4
-*.avi
-*.mov
-
-# Fonts
-*.ttf
-*.woff
-*.woff2
-*.eot
-
-# Archives
-*.zip
-*.tar
-*.gz
-*.rar
-*.7z
-
-# Package manager lock files
-go.sum
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
-Cargo.lock
-Gemfile.lock
-composer.lock
-Pipfile.lock
-poetry.lock
-
-# Build/config files
-go.mod
-package.json
-requirements.txt
-Makefile
-Dockerfile
-docker-compose.yml
-.dockerignore
-.gitattributes
-
-# Documentation files
-*.md
-*.txt
-*.rst
-*.adoc
-README*
-LICENSE
-COPYING
-
-# Common directories to skip
-.git/
-.svn/
-.hg/
-node_modules/
-.venv/
-venv/
-__pycache__/
-.pytest_cache/
-.mypy_cache/
-build/
-dist/
-target/
-.gradle/
-.idea/
-.vscode/
-
-# Hidden files.
-.*
-`
+//go:embed redunceignore.default
+var embeddedDefaultIgnore string
 
 // parseIgnorePatterns parses ignore patterns from a string (like file content)
 func parseIgnorePatterns(content string) []string {
@@ -121,18 +31,10 @@ func parseIgnorePatterns(content string) []string {
 	return patterns
 }
 
-// getGlobalIgnorePaths returns paths to check for global ignore files, in order of precedence
+// getGlobalIgnorePaths returns paths to check for user-level global ignore files
 func getGlobalIgnorePaths() []string {
 	var paths []string
 
-	// System-wide locations (Homebrew)
-	// Check common Homebrew prefixes
-	for _, prefix := range []string{"/opt/homebrew", "/usr/local", "/home/linuxbrew/.linuxbrew"} {
-		systemPath := filepath.Join(prefix, "etc", "redunce", "ignore")
-		paths = append(paths, systemPath)
-	}
-
-	// User global locations (XDG and simple fallback)
 	homeDir, err := os.UserHomeDir()
 	if err == nil {
 		// XDG Base Directory spec (preferred)
@@ -150,13 +52,18 @@ func getGlobalIgnorePaths() []string {
 }
 
 // GetResolvedIgnorePatterns returns the combined ignore patterns from all sources
-// Order (least to most specific): hardcoded defaults -> system -> global -> project .gitignore -> project .redunceignore
-func GetResolvedIgnorePatterns(baseDir string) ([]string, error) {
-	// Start with hardcoded default patterns
-	patterns := parseIgnorePatterns(defaultRedunceignore)
+// Order (least to most specific): embedded defaults -> user global -> project .gitignore -> project .redunceignore
+func GetResolvedIgnorePatterns(baseDir string, noDefaultIgnore bool) ([]string, error) {
+	var patterns []string
 
-	// Add global ignore files (system-wide, then user-specific)
-	for _, globalPath := range getGlobalIgnorePaths() {
+	// Use embedded defaults unless disabled
+	if !noDefaultIgnore {
+		patterns = parseIgnorePatterns(embeddedDefaultIgnore)
+	}
+
+	// Add user-level global ignore files (XDG and simple fallback)
+	systemPaths := getGlobalIgnorePaths()
+	for _, globalPath := range systemPaths {
 		globalPatterns, err := loadIgnoreFile(globalPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load global ignore file %s: %w", globalPath, err)
@@ -212,7 +119,7 @@ func shouldAnalyzeFile(path string, content []byte) bool {
 }
 
 // ScanPaths recursively scans the given paths and returns all source files
-func ScanPaths(paths []string) ([]string, error) {
+func ScanPaths(paths []string, noDefaultIgnore bool) ([]string, error) {
 	var files []string
 	seen := make(map[string]bool)
 
@@ -230,6 +137,12 @@ func ScanPaths(paths []string) ([]string, error) {
 		}
 
 		if info.IsDir() {
+			// Get resolved ignore patterns (embedded defaults + user global + project files)
+			resolvedPatterns, err := GetResolvedIgnorePatterns(absPath, noDefaultIgnore)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get ignore patterns: %w", err)
+			}
+
 			// Create gitignore matcher for this directory tree
 			// Checks both .redunceignore and .gitignore at each level
 			matcher, err := NewIgnoreMatcher(absPath)
@@ -243,7 +156,17 @@ func ScanPaths(paths []string) ([]string, error) {
 					return err
 				}
 
-				// Check ignore patterns
+				// Check resolved patterns (embedded defaults + user global)
+				ignored, matchedPattern := matchesIgnorePatterns(path, absPath, resolvedPatterns)
+				if ignored && matchedPattern != "" {
+					// Matched an ignore pattern
+					if info.IsDir() {
+						return filepath.SkipDir
+					}
+					return nil
+				}
+
+				// Check ignore patterns from .redunceignore and .gitignore
 				var explicitlyIncluded bool
 				if matcher != nil {
 					match := matcher.Match(path)

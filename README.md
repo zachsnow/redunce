@@ -77,16 +77,42 @@ In any project, simply type `/redunce` or `/redunce-approve` in Claude Code, and
 - **`/redunce`** - Best for learning the tool or when you want full control over each decision
 - **`/redunce-approve`** - Best for trusted codebases where you want Claude to work autonomously (it will still run tests and revert if they fail)
 
-For more details, see `.claude/README.md` in this repository.
+For more details, see `claude/README.md` in this repository.
 
-## .redunceignore
+## Ignore Patterns
 
-You can create a `.redunceignore` file in your project root to exclude specific files or directories from analysis.
-The syntax is identical to `.gitignore`. Both `.redunceignore` and `.gitignore` are combined with the built-in ignore
-patterns when determining which files to analyze.
+### Default Patterns
 
-If a file is ignored by the default patterns, or by your `.gitignore`, you can use a negated pattern (prefixed with
-`!`) to explicitly include it in analysis in your `.redunceignore`.
+`redunce` includes embedded default ignore patterns for common files that shouldn't be analyzed:
+- Binary files (`.exe`, `.dll`, `.so`, etc.)
+- Media files (images, videos, audio)
+- Package manager lock files
+- Build artifacts and dependencies
+- Documentation files (`.md`, `.txt`, etc.)
+- Version control directories (`.git/`, `.svn/`, etc.)
+- Hidden files (`.*`)
+
+### Custom Ignore Files
+
+You can override or extend the defaults by creating ignore files:
+
+**User-level** (applies to all projects):
+- `~/.config/redunce/ignore` (recommended, XDG-compliant)
+- `~/.redunceignore` (alternative, simpler)
+
+**Project-level**:
+- `.redunceignore` in your project root
+- `.gitignore` is also respected
+
+### Pattern Precedence
+
+Patterns are applied in order: **embedded defaults → user global → .gitignore → .redunceignore**
+
+Use `!pattern` in later files to un-ignore patterns from earlier sources.
+
+### Skipping Defaults
+
+Use `--no-default-ignore` to skip embedded defaults entirely, forcing complete specification via user/project ignore files.
 
 # Building
 

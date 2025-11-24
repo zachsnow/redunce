@@ -7,6 +7,9 @@ import (
 // NewIgnoreMatcher creates a gitignore matcher that checks both .redunceignore
 // and .gitignore files at each directory level, with .redunceignore taking
 // precedence.
+//
+// Note: System-level defaults are handled separately in ScanPaths using
+// Get ResolvedIgnorePatterns and matchesIgnorePatterns.
 func NewIgnoreMatcher(baseDir string) (gitignore.GitIgnore, error) {
 	// Check .redunceignore first, then .gitignore at each directory level
 	// If .redunceignore has a pattern match, it takes precedence

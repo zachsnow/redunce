@@ -33,6 +33,7 @@
 *.mp4
 *.avi
 *.mov
+*.m4a
 
 # Fonts
 *.ttf
@@ -64,3 +65,36 @@ package.json
 requirements.txt
 Makefile
 Dockerfile
+docker-compose.yml
+.dockerignore
+.gitattributes
+
+# Documentation files
+*.md
+*.txt
+*.rst
+*.adoc
+README*
+LICENSE
+COPYING
+
+# Common directories to skip
+.git/
+.svn/
+.hg/
+node_modules/
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+build/
+dist/
+target/
+.gradle/
+.idea/
+.vscode/
+.claude/
+
+# Hidden files
+.*

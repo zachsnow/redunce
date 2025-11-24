@@ -17,7 +17,7 @@ import (
 	"github.com/ZachSnow/redunce/internal/util"
 )
 
-//go:embed .claude/commands/*.md
+//go:embed claude/commands/*.md
 var claudeCommands embed.FS
 
 const (
@@ -63,6 +63,7 @@ type Config struct {
 	LocalRefreezeThreshold float64
 	LocalRefreeze          bool
 	Limit                  int
+	NoDefaultIgnore        bool
 }
 
 func main() {
@@ -97,6 +98,7 @@ func main() {
 	flag.BoolVar(&cfg.Verbose, "verbose", false, "enable verbose progress output")
 	flag.Float64Var(&cfg.LocalRefreezeThreshold, "refreeze-threshold", 0.20, "auto-refreeze vocabulary when new chunks exceed this fraction of corpus (0.0-1.0)")
 	flag.BoolVar(&cfg.LocalRefreeze, "refreeze", false, "manually trigger vocabulary refreeze and re-embed all chunks")
+	flag.BoolVar(&cfg.NoDefaultIgnore, "no-default-ignore", false, "skip default ignore patterns, use only user/project ignore files")
 
 	flag.Parse()
 
@@ -134,13 +136,17 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: failed to get absolute path: %v\n", err)
 			os.Exit(1)
 		}
-		patterns, err := scanner.GetResolvedIgnorePatterns(absDir)
+		patterns, err := scanner.GetResolvedIgnorePatterns(absDir, cfg.NoDefaultIgnore)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to get ignore patterns: %v\n", err)
 			os.Exit(1)
 		}
 		fmt.Println("# Resolved ignore patterns (combined from all sources)")
-		fmt.Println("# Order: hardcoded defaults -> system -> global -> .gitignore -> .redunceignore")
+		if cfg.NoDefaultIgnore {
+			fmt.Println("# Order: user global -> .gitignore -> .redunceignore (no defaults)")
+		} else {
+			fmt.Println("# Order: embedded defaults -> user global -> .gitignore -> .redunceignore")
+		}
 		fmt.Printf("# Base directory: %s\n\n", absDir)
 		for _, pattern := range patterns {
 			fmt.Println(pattern)
@@ -153,7 +159,7 @@ func main() {
 		if len(args) == 0 {
 			args = []string{"."}
 		}
-		files, err := scanner.ScanPaths(args)
+		files, err := scanner.ScanPaths(args, cfg.NoDefaultIgnore)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to scan paths: %v\n", err)
 			os.Exit(1)
@@ -170,7 +176,7 @@ func main() {
 		if len(args) == 0 {
 			args = []string{"."}
 		}
-		files, err := scanner.ScanPaths(args)
+		files, err := scanner.ScanPaths(args, cfg.NoDefaultIgnore)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to scan paths: %v\n", err)
 			os.Exit(1)
@@ -435,7 +441,7 @@ func run(cfg Config, paths []string) error {
 
 	// Scan files
 	logVerbose("Scanning files...\n")
-	files, err := scanner.ScanPaths(paths)
+	files, err := scanner.ScanPaths(paths, cfg.NoDefaultIgnore)
 	if err != nil {
 		return fmt.Errorf("failed to scan paths: %w", err)
 	}
@@ -854,7 +860,7 @@ func installClaudeCommandsToDir(baseDir string) error {
 	}
 
 	// Read embedded command files
-	entries, err := claudeCommands.ReadDir(".claude/commands")
+	entries, err := claudeCommands.ReadDir("claude/commands")
 	if err != nil {
 		return fmt.Errorf("failed to read embedded commands: %w", err)
 	}
@@ -866,7 +872,7 @@ func installClaudeCommandsToDir(baseDir string) error {
 		}
 
 		filename := entry.Name()
-		sourcePath := filepath.Join(".claude/commands", filename)
+		sourcePath := filepath.Join("claude/commands", filename)
 		targetPath := filepath.Join(targetDir, filename)
 
 		// Read embedded file
