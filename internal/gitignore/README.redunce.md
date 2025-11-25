@@ -38,4 +38,5 @@ matcher := gitignore.NewRepositoryWithFiles(baseDir, files, nil, nil)
 
 We needed to support checking multiple ignore filenames (`.redunceignore` and `.gitignore`) at each directory level with `.redunceignore` taking precedence. The upstream library only supports a single filename per repository.
 
-If these changes prove valuable, we may contribute them back upstream.
+If these changes prove valuable, we may contribute them back upstream. It seems like a lot of developer tools
+try to respect `.gitignore` and add their own ignore file on top.

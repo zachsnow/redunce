@@ -152,6 +152,15 @@ docker push zachsnow/redunce:latest
 
 ## Key Considerations
 
+### Embedded Assets
+
+The `redunce` binary includes embedded assets:
+
+1. **Default ignore patterns** (`internal/scanner/redunceignore.default`) - Embedded in the binary, used by default
+2. **Claude Code commands** (`claude/commands/*.md`) - Embedded in the binary, can be installed via `--install-claude-commands`
+
+These assets are embedded using Go's `embed` package, so they're part of the binary and don't require separate distribution.
+
 ### Extension Dependency
 
 The main complexity in distributing redunce is the sqlite-vector extension dependency:
