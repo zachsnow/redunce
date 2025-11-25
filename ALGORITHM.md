@@ -19,7 +19,7 @@ The scanner automatically filters out:
 ## Chunking
 
 It then iterates over this list, chunking the files into smaller and smaller parts. It prefers to use a
-syntax-aware chunker (via [treesitter](github.com/tree-sitter/go-tree-sitter)), but falls back to a
+syntax-aware chunker (via [tree-sitter](https://github.com/smacker/go-tree-sitter)), but falls back to a
 line-based chunker if it doesn't understand a particular format. Each chunk has the following form:
 
 ```sql
@@ -154,7 +154,8 @@ path: path1
 lines: ...
 <code>
 
-path: path2lines: ...
+path: path2
+lines: ...
 <code>
 
 path: path3

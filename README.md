@@ -2,9 +2,18 @@
 
 > Stupid redundancy detector.
 
-`redunce` is a golang CLI tool for identifying potentially-redundant text in a file or collection of files.
-The intention is that an agent like Codex or Claude will use this tool to refactor its work after making
+`redunce` is a Go CLI tool for identifying potentially-redundant code in a file or collection of files.
+The intention is that an agent like Claude will use this tool to refactor its work after making
 large-scale changes to a codebase.
+
+# Installation
+
+```bash
+brew tap ZachSnow/redunce https://github.com/ZachSnow/redunce
+brew install redunce
+```
+
+Or [build from source](#building).
 
 # Usage
 
@@ -13,6 +22,31 @@ If you don't pass any files or directories, it prints usage information.
 
 ```bash
 $ redunce <file-or-directory ...>
+```
+
+Example output:
+
+```
+# Cluster 1 (3 chunks, avg similarity: 0.91)
+
+**Canonical chunk** `a6adf109`
+
+**Path**: `src/handlers/user.go`
+**Lines**: 42-58
+
+​```go
+func validateInput(input string) error {
+    if input == "" {
+        return errors.New("input cannot be empty")
+    }
+    // ... validation logic
+}
+​```
+
+**Similar chunks:**
+
+1. `src/handlers/order.go:31-47` (similarity: 0.92)
+2. `src/handlers/product.go:55-71` (similarity: 0.89)
 ```
 
 ## Ignore Patterns
@@ -68,7 +102,7 @@ For more details, see `claude/README.md` in this repository.
 
 ## Prerequisites
 
-- Go 1.25.4 or later
+- Go 1.22 or later
 - [sqlite-vector](https://github.com/sqliteai/sqlite-vector) extension (required for vector similarity search)
 
 ## Setup sqlite-vector extension
@@ -102,13 +136,16 @@ Once the extension is in place, build `redunce`:
 $ ./build.sh
 ```
 
-This will create the `redunce` binary in the current directory. You can then move it to your `$PATH`:
+This will create the `redunce` binary in the current directory.
+
+To install system-wide, move both the binary and the extension to appropriate locations:
 
 ```bash
-mv redunce /usr/local/bin/
+sudo mv redunce /usr/local/bin/
+sudo mv libvector.dylib /usr/local/lib/   # or libvector.so on Linux
 ```
 
-The `libvector` extension must remain accessible to the binary at runtime (either in the same directory as the binary, or in a system library path).
+The extension is searched for in: `./libvector`, `/opt/homebrew/lib/libvector`, `/usr/local/lib/libvector`, `/usr/lib/libvector`.
 
 ## Cleaning
 

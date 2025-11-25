@@ -21,10 +21,15 @@ import (
 var claudeCommands embed.FS
 
 const (
-	// BatchSize is the number of chunks to process in one batch
+	// BatchSize is the number of chunks to embed in one API/processing batch.
+	// Tuned for OpenAI rate limits and memory efficiency.
 	BatchSize = 64
 
-	// Version is the application version
+	// MaxClusterIndex is the maximum cluster index accepted by --ignore flag.
+	// Indices above this are treated as SHA prefixes instead of cluster numbers.
+	MaxClusterIndex = 1000
+
+	// Version is the application version (source of truth for releases).
 	Version = "0.1.0"
 )
 
@@ -36,6 +41,28 @@ func logVerbose(format string, args ...interface{}) {
 	if verbose {
 		fmt.Fprintf(os.Stderr, format, args...)
 	}
+}
+
+// findChunkBySHAPrefix finds chunks matching a SHA prefix.
+func findChunkBySHAPrefix(chunks []*store.Chunk, prefix string) []*store.Chunk {
+	var matches []*store.Chunk
+	for _, chunk := range chunks {
+		if len(chunk.SHA) >= len(prefix) && chunk.SHA[:len(prefix)] == prefix {
+			matches = append(matches, chunk)
+		}
+	}
+	return matches
+}
+
+// findClusterBySHAPrefix finds clusters whose ID (canonical chunk SHA) matches a prefix.
+func findClusterBySHAPrefix(clusters []*cluster.Cluster, prefix string) []*cluster.Cluster {
+	var matches []*cluster.Cluster
+	for _, cl := range clusters {
+		if len(cl.ClusterID) >= len(prefix) && cl.ClusterID[:len(prefix)] == prefix {
+			matches = append(matches, cl)
+		}
+	}
+	return matches
 }
 
 type Config struct {
@@ -215,7 +242,7 @@ func main() {
 		var targetChunk *store.Chunk
 
 		// Check if the input is a small integer (cluster index)
-		if clusterIndex, err := strconv.Atoi(cfg.IgnoreCluster); err == nil && clusterIndex > 0 && clusterIndex <= 1000 {
+		if clusterIndex, err := strconv.Atoi(cfg.IgnoreCluster); err == nil && clusterIndex > 0 && clusterIndex <= MaxClusterIndex {
 			// Treat as cluster index - rebuild clusters from existing chunks
 			verbose = cfg.Verbose
 
@@ -248,20 +275,11 @@ func main() {
 				os.Exit(1)
 			}
 
-			var matches []*store.Chunk
-			for _, chunk := range chunks {
-				// Match if SHA starts with the provided prefix
-				if len(chunk.SHA) >= len(cfg.IgnoreCluster) &&
-				   chunk.SHA[:len(cfg.IgnoreCluster)] == cfg.IgnoreCluster {
-					matches = append(matches, chunk)
-				}
-			}
-
+			matches := findChunkBySHAPrefix(chunks, cfg.IgnoreCluster)
 			if len(matches) == 0 {
 				fmt.Fprintf(os.Stderr, "Error: cluster ID %s not found\n", cfg.IgnoreCluster)
 				os.Exit(1)
 			}
-
 			if len(matches) > 1 {
 				fmt.Fprintf(os.Stderr, "Error: ambiguous cluster ID %s matches %d clusters:\n", cfg.IgnoreCluster, len(matches))
 				for _, match := range matches {
@@ -270,7 +288,6 @@ func main() {
 				fmt.Fprintf(os.Stderr, "Please provide a longer prefix.\n")
 				os.Exit(1)
 			}
-
 			targetChunk = matches[0]
 		}
 
@@ -300,19 +317,11 @@ func main() {
 			os.Exit(1)
 		}
 
-		var matches []*store.Chunk
-		for _, chunk := range chunks {
-			if len(chunk.SHA) >= len(cfg.PrintChunk) &&
-			   chunk.SHA[:len(cfg.PrintChunk)] == cfg.PrintChunk {
-				matches = append(matches, chunk)
-			}
-		}
-
+		matches := findChunkBySHAPrefix(chunks, cfg.PrintChunk)
 		if len(matches) == 0 {
 			fmt.Fprintf(os.Stderr, "Error: chunk %s not found\n", cfg.PrintChunk)
 			os.Exit(1)
 		}
-
 		if len(matches) > 1 {
 			fmt.Fprintf(os.Stderr, "Error: ambiguous chunk ID %s matches %d chunks:\n", cfg.PrintChunk, len(matches))
 			for _, match := range matches {
@@ -321,7 +330,6 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Please provide a longer prefix.\n")
 			os.Exit(1)
 		}
-
 		chunk := matches[0]
 		fmt.Printf("# Chunk: %s\n\n", util.ShortSHA(chunk.SHA))
 		fmt.Printf("**Path**: `%s`  \n", chunk.Path)
@@ -352,20 +360,11 @@ func main() {
 			os.Exit(1)
 		}
 
-		var matches []*cluster.Cluster
-		for _, cl := range clusters {
-			clusterID := cl.ClusterID
-			if len(clusterID) >= len(cfg.PrintCluster) &&
-			   clusterID[:len(cfg.PrintCluster)] == cfg.PrintCluster {
-				matches = append(matches, cl)
-			}
-		}
-
+		matches := findClusterBySHAPrefix(clusters, cfg.PrintCluster)
 		if len(matches) == 0 {
 			fmt.Fprintf(os.Stderr, "Error: cluster %s not found\n", cfg.PrintCluster)
 			os.Exit(1)
 		}
-
 		if len(matches) > 1 {
 			fmt.Fprintf(os.Stderr, "Error: ambiguous cluster ID %s matches %d clusters:\n", cfg.PrintCluster, len(matches))
 			for _, match := range matches {
@@ -833,7 +832,7 @@ func processFiles(cfg Config, db *store.Store, files []string, emb embedder.Embe
 		}
 	}
 
-	logVerbose("✓ Processing complete\n")
+	logVerbose("Processing complete\n")
 	return len(allNewChunks), nil
 }
 
