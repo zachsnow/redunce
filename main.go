@@ -70,6 +70,7 @@ type Config struct {
 	IgnoreThreshold   float64
 	EmbedMethod    string
 	Format         string
+	Score          string
 	LocalMinLines  int
 	LocalMaxLines  int
 	LocalStepLines int
@@ -105,6 +106,7 @@ func main() {
 	flag.Float64Var(&cfg.IgnoreThreshold, "ignore-threshold", 0.95, "ignore similarity threshold (0-1), higher than clustering threshold")
 	flag.StringVar(&cfg.EmbedMethod, "embed", "local", "embedding method: local|openai")
 	flag.StringVar(&cfg.Format, "format", "md", "output format: json|md")
+	flag.StringVar(&cfg.Score, "score", "default", "cluster scoring strategy: old|impact|default")
 	flag.IntVar(&cfg.Limit, "limit", 10, "limit output to top N clusters (0 = no limit)")
 	flag.IntVar(&cfg.LocalMinLines, "local-min-lines", 3, "minimum lines per chunk for local")
 	flag.IntVar(&cfg.LocalMaxLines, "local-max-lines", 30, "maximum lines per chunk for local")
@@ -243,13 +245,10 @@ func main() {
 
 		// Check if the input is a small integer (cluster index)
 		if clusterIndex, err := strconv.Atoi(cfg.IgnoreCluster); err == nil && clusterIndex > 0 && clusterIndex <= MaxClusterIndex {
-			// Treat as cluster index - rebuild clusters from existing chunks
-			verbose = cfg.Verbose
-
-			// Find clusters from existing chunks
-			clusters, err := cluster.FindClusters(db, cfg.Threshold, cfg.IgnoreThreshold, false)
+			// Treat as cluster index - load existing clusters
+			clusters, err := cluster.LoadClusters(db, cluster.ScoreStrategy(cfg.Score))
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to find clusters: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Error: failed to load clusters: %v\n", err)
 				os.Exit(1)
 			}
 
@@ -348,10 +347,9 @@ func main() {
 		}
 		defer db.Close()
 
-		verbose = cfg.Verbose
-		clusters, err := cluster.FindClusters(db, cfg.Threshold, cfg.IgnoreThreshold, false)
+		clusters, err := cluster.LoadClusters(db, cluster.ScoreStrategy(cfg.Score))
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to find clusters: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error: failed to load clusters: %v\n", err)
 			os.Exit(1)
 		}
 
@@ -448,16 +446,17 @@ func run(cfg Config, paths []string) error {
 
 	// Process files based on embed method
 	var totalChunks int
+	var newChunkIDs []int64
 	switch cfg.EmbedMethod {
 	case "openai":
 		emb := embedder.NewOpenAIEmbedder(cfg.OpenAIAPIKey)
-		totalChunks, err = processFilesStreaming(cfg, db, files, emb)
+		totalChunks, newChunkIDs, err = processFilesStreaming(cfg, db, files, emb)
 		if err != nil {
 			return err
 		}
 	case "local":
 		emb := embedder.NewTFIDFEmbedder(db, store.EmbeddingDimension, cfg.LocalRefreezeThreshold, cfg.LocalRefreeze)
-		totalChunks, err = processFiles(cfg, db, files, emb)
+		totalChunks, newChunkIDs, err = processFiles(cfg, db, files, emb)
 		if err != nil {
 			return err
 		}
@@ -465,15 +464,22 @@ func run(cfg Config, paths []string) error {
 		return fmt.Errorf("unknown embed method: %s", cfg.EmbedMethod)
 	}
 
-	logVerbose("Total chunks: %d\n", totalChunks)
+	logVerbose("Total new chunks: %d\n", totalChunks)
 
-	// Cluster similar chunks
-	logVerbose("Clustering similar chunks...\n")
-	clusters, err := cluster.FindClusters(db, cfg.Threshold, cfg.IgnoreThreshold, cfg.Verbose)
+	// Cluster new chunks incrementally
+	logVerbose("Clustering %d new chunks...\n", len(newChunkIDs))
+	clustered, err := cluster.ClusterNewChunks(db, newChunkIDs, cfg.Threshold, cfg.IgnoreThreshold, cfg.Verbose)
 	if err != nil {
 		return fmt.Errorf("failed to cluster chunks: %w", err)
 	}
-	logVerbose("Found %d clusters\n", len(clusters))
+	logVerbose("Clustered %d new chunks\n", clustered)
+
+	// Load all clusters for output
+	clusters, err := cluster.LoadClusters(db, cluster.ScoreStrategy(cfg.Score))
+	if err != nil {
+		return fmt.Errorf("failed to load clusters: %w", err)
+	}
+	logVerbose("Total clusters: %d\n", len(clusters))
 
 	// Apply limit if specified
 	if cfg.Limit > 0 && len(clusters) > cfg.Limit {
@@ -615,9 +621,10 @@ func handleQuery(cfg Config, db *store.Store) error {
 	return formatter.Format(os.Stdout, clusters)
 }
 
-func processFilesStreaming(cfg Config, db *store.Store, files []string, emb embedder.Embedder) (int, error) {
+func processFilesStreaming(cfg Config, db *store.Store, files []string, emb embedder.Embedder) (int, []int64, error) {
 	fmt.Println("Processing files (streaming mode)...")
 	totalChunks := 0
+	var newChunkIDs []int64
 
 	for i, file := range files {
 		fmt.Printf("Processing [%d/%d]: %s\n", i+1, len(files), file)
@@ -625,7 +632,7 @@ func processFilesStreaming(cfg Config, db *store.Store, files []string, emb embe
 		// Check if file needs updating
 		needsUpdate, err := db.NeedsUpdate(file)
 		if err != nil {
-			return 0, fmt.Errorf("failed to check if file needs update: %w", err)
+			return 0, nil, fmt.Errorf("failed to check if file needs update: %w", err)
 		}
 
 		if !needsUpdate {
@@ -635,7 +642,7 @@ func processFilesStreaming(cfg Config, db *store.Store, files []string, emb embe
 
 		// Delete old chunks for this file
 		if err := db.DeleteChunksForFile(file); err != nil {
-			return 0, fmt.Errorf("failed to delete old chunks: %w", err)
+			return 0, nil, fmt.Errorf("failed to delete old chunks: %w", err)
 		}
 
 		// Chunk the file
@@ -659,15 +666,16 @@ func processFilesStreaming(cfg Config, db *store.Store, files []string, emb embe
 
 			embeddings, err := emb.EmbedBatch(batch)
 			if err != nil {
-				return 0, fmt.Errorf("failed to embed chunks: %w", err)
+				return 0, nil, fmt.Errorf("failed to embed chunks: %w", err)
 			}
 
 			// Store chunks with embeddings
 			for k, chunk := range batch {
 				chunk.Embedding = embeddings[k]
 				if err := db.InsertChunk(chunk); err != nil {
-					return 0, fmt.Errorf("failed to insert chunk: %w", err)
+					return 0, nil, fmt.Errorf("failed to insert chunk: %w", err)
 				}
+				newChunkIDs = append(newChunkIDs, chunk.ID)
 			}
 		}
 
@@ -675,10 +683,10 @@ func processFilesStreaming(cfg Config, db *store.Store, files []string, emb embe
 		fmt.Printf("  Created %d chunks\n", len(chunks))
 	}
 
-	return totalChunks, nil
+	return totalChunks, newChunkIDs, nil
 }
 
-func processFiles(cfg Config, db *store.Store, files []string, emb embedder.Embedder) (int, error) {
+func processFiles(cfg Config, db *store.Store, files []string, emb embedder.Embedder) (int, []int64, error) {
 	logVerbose("Processing files...\n")
 
 	// Step 1: Chunk new files
@@ -692,7 +700,7 @@ func processFiles(cfg Config, db *store.Store, files []string, emb embedder.Embe
 		// Check if file needs updating
 		needsUpdate, err := db.NeedsUpdate(file)
 		if err != nil {
-			return 0, fmt.Errorf("failed to check if file needs update: %w", err)
+			return 0, nil, fmt.Errorf("failed to check if file needs update: %w", err)
 		}
 
 		if !needsUpdate {
@@ -718,14 +726,14 @@ func processFiles(cfg Config, db *store.Store, files []string, emb embedder.Embe
 
 	if len(allNewChunks) == 0 {
 		logVerbose("No new chunks to process\n")
-		return 0, nil
+		return 0, nil, nil
 	}
 
 	// Step 2: Prepare embedder and decide whether to re-embed all chunks
 	logVerbose("Step 2: Preparing embedder...\n")
 	shouldReembedAll, err := emb.PrepareEmbed(allNewChunks)
 	if err != nil {
-		return 0, fmt.Errorf("failed to prepare embedder: %w", err)
+		return 0, nil, fmt.Errorf("failed to prepare embedder: %w", err)
 	}
 
 	var chunksToEmbed []*store.Chunk
@@ -736,19 +744,19 @@ func processFiles(cfg Config, db *store.Store, files []string, emb embedder.Embe
 
 		// Delete clusters (will be rebuilt later)
 		if err := db.DeleteAllClusters(); err != nil {
-			return 0, fmt.Errorf("failed to delete clusters: %w", err)
+			return 0, nil, fmt.Errorf("failed to delete clusters: %w", err)
 		}
 
 		// Load existing chunks
 		existingChunks, err := db.GetAllChunks()
 		if err != nil {
-			return 0, fmt.Errorf("failed to get existing chunks: %w", err)
+			return 0, nil, fmt.Errorf("failed to get existing chunks: %w", err)
 		}
 		logVerbose("Found %d existing chunks\n", len(existingChunks))
 
 		// Delete all chunks (CASCADE handles cluster memberships)
 		if err := db.DeleteAllChunks(); err != nil {
-			return 0, fmt.Errorf("failed to delete all chunks: %w", err)
+			return 0, nil, fmt.Errorf("failed to delete all chunks: %w", err)
 		}
 
 		// Combine existing and new chunks for re-embedding
@@ -762,7 +770,7 @@ func processFiles(cfg Config, db *store.Store, files []string, emb embedder.Embe
 		// Delete old chunks for updated files
 		for _, file := range filesToUpdate {
 			if err := db.DeleteChunksForFile(file); err != nil {
-				return 0, fmt.Errorf("failed to delete old chunks: %w", err)
+				return 0, nil, fmt.Errorf("failed to delete old chunks: %w", err)
 			}
 		}
 
@@ -770,7 +778,8 @@ func processFiles(cfg Config, db *store.Store, files []string, emb embedder.Embe
 		logVerbose("Embedding %d new chunks...\n", len(chunksToEmbed))
 	}
 
-	// Step 3: Embed chunks in batches
+	// Step 3: Embed chunks in batches and collect new chunk IDs
+	var newChunkIDs []int64
 	for i := 0; i < len(chunksToEmbed); i += BatchSize {
 		end := i + BatchSize
 		if end > len(chunksToEmbed) {
@@ -780,14 +789,15 @@ func processFiles(cfg Config, db *store.Store, files []string, emb embedder.Embe
 
 		embeddings, err := emb.EmbedBatch(batch)
 		if err != nil {
-			return 0, fmt.Errorf("failed to embed chunks: %w", err)
+			return 0, nil, fmt.Errorf("failed to embed chunks: %w", err)
 		}
 
 		for j, chunk := range batch {
 			chunk.Embedding = embeddings[j]
 			if err := db.InsertChunk(chunk); err != nil {
-				return 0, fmt.Errorf("failed to insert chunk: %w", err)
+				return 0, nil, fmt.Errorf("failed to insert chunk: %w", err)
 			}
+			newChunkIDs = append(newChunkIDs, chunk.ID)
 		}
 
 		logVerbose("  Embedded and stored %d/%d chunks\n", end, len(chunksToEmbed))
@@ -797,7 +807,7 @@ func processFiles(cfg Config, db *store.Store, files []string, emb embedder.Embe
 	if shouldReembedAll {
 		ignoredChunks, err := db.GetAllIgnores()
 		if err != nil {
-			return 0, fmt.Errorf("failed to get ignored chunks: %w", err)
+			return 0, nil, fmt.Errorf("failed to get ignored chunks: %w", err)
 		}
 
 		if len(ignoredChunks) > 0 {
@@ -812,7 +822,7 @@ func processFiles(cfg Config, db *store.Store, files []string, emb embedder.Embe
 
 				embeddings, err := emb.EmbedBatch(batch)
 				if err != nil {
-					return 0, fmt.Errorf("failed to embed ignored chunks: %w", err)
+					return 0, nil, fmt.Errorf("failed to embed ignored chunks: %w", err)
 				}
 
 				// Update embeddings in the ignores table
@@ -820,10 +830,10 @@ func processFiles(cfg Config, db *store.Store, files []string, emb embedder.Embe
 					chunk.Embedding = embeddings[j]
 					// Remove and re-add the ignore with new embedding
 					if err := db.RemoveIgnore(chunk.SHA); err != nil {
-						return 0, fmt.Errorf("failed to remove old ignore: %w", err)
+						return 0, nil, fmt.Errorf("failed to remove old ignore: %w", err)
 					}
 					if err := db.AddIgnore(chunk.SHA, chunk.Code, chunk.Embedding); err != nil {
-						return 0, fmt.Errorf("failed to update ignored chunk: %w", err)
+						return 0, nil, fmt.Errorf("failed to update ignored chunk: %w", err)
 					}
 				}
 
@@ -833,7 +843,7 @@ func processFiles(cfg Config, db *store.Store, files []string, emb embedder.Embe
 	}
 
 	logVerbose("Processing complete\n")
-	return len(allNewChunks), nil
+	return len(allNewChunks), newChunkIDs, nil
 }
 
 func installClaudeCommandsToDir(baseDir string) error {

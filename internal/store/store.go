@@ -515,6 +515,112 @@ func (s *Store) IsChunkInCluster(chunkID int64) (bool, error) {
 	return count > 0, nil
 }
 
+// GetClusterIDForChunk returns the cluster ID for a chunk, or 0 if not in a cluster
+func (s *Store) GetClusterIDForChunk(chunkID int64) (int64, error) {
+	var clusterID int64
+	err := s.db.QueryRow("SELECT cluster_id FROM cluster_chunks WHERE chunk_id = ?", chunkID).Scan(&clusterID)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("failed to get cluster for chunk: %w", err)
+	}
+	return clusterID, nil
+}
+
+// UpdateClusterStats updates the statistics for a cluster after adding chunks
+func (s *Store) UpdateClusterStats(clusterID int64) error {
+	_, err := s.db.Exec(`
+		UPDATE clusters SET
+			size = (SELECT COUNT(*) FROM cluster_chunks WHERE cluster_id = ?),
+			avg_similarity = (SELECT AVG(similarity) FROM cluster_chunks WHERE cluster_id = ?),
+			max_similarity = (SELECT MAX(similarity) FROM cluster_chunks WHERE cluster_id = ?)
+		WHERE id = ?
+	`, clusterID, clusterID, clusterID, clusterID)
+	if err != nil {
+		return fmt.Errorf("failed to update cluster stats: %w", err)
+	}
+	return nil
+}
+
+// DeleteEmptyClusters removes clusters that have fewer than 2 chunks
+func (s *Store) DeleteEmptyClusters() error {
+	_, err := s.db.Exec(`
+		DELETE FROM clusters WHERE id IN (
+			SELECT cl.id FROM clusters cl
+			LEFT JOIN cluster_chunks cc ON cl.id = cc.cluster_id
+			GROUP BY cl.id
+			HAVING COUNT(cc.chunk_id) < 2
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to delete empty clusters: %w", err)
+	}
+	return nil
+}
+
+// ClusterRaw represents raw cluster data from the database
+type ClusterRaw struct {
+	ID               int64
+	CanonicalChunkID int64
+	AvgSimilarity    float64
+	MaxSimilarity    float64
+	Size             int
+	ChunkIDs         []int64
+	Similarities     []float64
+}
+
+// GetAllClustersRaw returns all clusters with their chunk IDs and canonical chunk ID
+// Used by cluster package to rebuild Cluster objects
+func (s *Store) GetAllClustersRaw() ([]ClusterRaw, error) {
+	// Get all clusters
+	rows, err := s.db.Query(`
+		SELECT id, canonical_chunk_id, avg_similarity, max_similarity, size
+		FROM clusters
+		ORDER BY size DESC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query clusters: %w", err)
+	}
+	defer rows.Close()
+
+	var clusters []ClusterRaw
+	for rows.Next() {
+		var c ClusterRaw
+		if err := rows.Scan(&c.ID, &c.CanonicalChunkID, &c.AvgSimilarity, &c.MaxSimilarity, &c.Size); err != nil {
+			return nil, fmt.Errorf("failed to scan cluster: %w", err)
+		}
+		clusters = append(clusters, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Get chunk IDs for each cluster
+	for i := range clusters {
+		chunkRows, err := s.db.Query(`
+			SELECT chunk_id, similarity FROM cluster_chunks WHERE cluster_id = ? ORDER BY similarity DESC
+		`, clusters[i].ID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query cluster chunks: %w", err)
+		}
+
+		for chunkRows.Next() {
+			var chunkID int64
+			var similarity float64
+			if err := chunkRows.Scan(&chunkID, &similarity); err != nil {
+				chunkRows.Close()
+				return nil, fmt.Errorf("failed to scan cluster chunk: %w", err)
+			}
+			clusters[i].ChunkIDs = append(clusters[i].ChunkIDs, chunkID)
+			clusters[i].Similarities = append(clusters[i].Similarities, similarity)
+		}
+		chunkRows.Close()
+	}
+
+	return clusters, nil
+}
+
 // QuantizeVectors prepares vector data for fast searching
 func (s *Store) QuantizeVectors() error {
 	_, err := s.db.Exec("SELECT vector_quantize('chunks', 'embedding')")
