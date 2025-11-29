@@ -376,7 +376,23 @@ func ChunkWithTreeSitter(path string, language string, minNodes, maxNodes int) (
 		}
 	}
 
-	return chunks, nil
+	// Deduplicate chunks by location (file path + line range)
+	// Keep the chunk with the longest code when duplicates exist
+	chunkMap := make(map[string]*store.Chunk)
+	for _, chunk := range chunks {
+		key := fmt.Sprintf("%s:%d-%d", chunk.Path, chunk.StartLine, chunk.EndLine)
+		if existing, ok := chunkMap[key]; !ok || len(chunk.Code) > len(existing.Code) {
+			chunkMap[key] = chunk
+		}
+	}
+
+	// Convert map back to slice
+	var deduplicatedChunks []*store.Chunk
+	for _, chunk := range chunkMap {
+		deduplicatedChunks = append(deduplicatedChunks, chunk)
+	}
+
+	return deduplicatedChunks, nil
 }
 
 // extractNodeCode extracts the source code for a given node
