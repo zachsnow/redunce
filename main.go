@@ -759,8 +759,21 @@ func processFiles(cfg Config, db *store.Store, files []string, emb embedder.Embe
 			return 0, nil, fmt.Errorf("failed to delete all chunks: %w", err)
 		}
 
-		// Combine existing and new chunks for re-embedding
-		chunksToEmbed = append(existingChunks, allNewChunks...)
+		// Filter out existing chunks for files that were updated (to avoid duplicates)
+		filesToUpdateSet := make(map[string]bool)
+		for _, file := range filesToUpdate {
+			filesToUpdateSet[file] = true
+		}
+		var filteredExistingChunks []*store.Chunk
+		for _, chunk := range existingChunks {
+			if !filesToUpdateSet[chunk.Path] {
+				filteredExistingChunks = append(filteredExistingChunks, chunk)
+			}
+		}
+		logVerbose("Filtered to %d existing chunks (excluding %d updated files)\n", len(filteredExistingChunks), len(filesToUpdate))
+
+		// Combine filtered existing chunks and new chunks for re-embedding
+		chunksToEmbed = append(filteredExistingChunks, allNewChunks...)
 		logVerbose("Re-embedding %d total chunks...\n", len(chunksToEmbed))
 
 	} else {
