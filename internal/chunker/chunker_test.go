@@ -31,6 +31,7 @@ func TestLanguageFromExtension(t *testing.T) {
 		{".cpp", "cpp"},
 		{".cc", "cpp"},
 		{".hpp", "cpp"},
+		{".hxx", "cpp"},
 
 		// Config/data formats
 		{".json", "json"},

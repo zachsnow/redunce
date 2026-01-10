@@ -87,6 +87,35 @@ Skipped clusters are remembered and won't be reported again, even after refactor
 
 **Note:** "Ignoring" (via `.redunceignore`) prevents files from being analyzed at all, while "skipping" marks a specific cluster of similar code as acceptable.
 
+## Advanced Options
+
+### Cluster Scoring
+
+Control how clusters are ranked with `--score`:
+
+- `default` - Weighted combination of total lines, chunk count, and similarity (recommended)
+- `impact` - Rank by total duplicated lines across all chunks
+- `old` - Rank by canonical chunk code length (original behavior)
+
+```bash
+redunce --score impact .
+```
+
+### TF-IDF Vocabulary Management
+
+When using local embeddings (`--embed local`, the default), redunce builds a TF-IDF vocabulary from your codebase. As your codebase grows, you may need to rebuild this vocabulary:
+
+- `--refreeze-threshold 0.20` - Automatically rebuild vocabulary when new chunks exceed this fraction of the corpus (default: 0.20 = 20%)
+- `--refreeze` - Manually trigger a vocabulary rebuild and re-embed all chunks
+
+```bash
+# Force vocabulary rebuild
+redunce --refreeze .
+
+# Adjust auto-refreeze sensitivity
+redunce --refreeze-threshold 0.10 .
+```
+
 ## Claude Code Integration
 
 `redunce` includes built-in slash commands for [Claude Code](https://claude.ai/claude-code), making it easy to systematically eliminate code duplication using an AI-assisted workflow.

@@ -68,10 +68,16 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # Extract version from main.go
-VERSION=$(grep 'Version = ' main.go | sed 's/.*Version = "\(.*\)"/\1/')
+VERSION=$(grep 'Version = ' main.go | head -1 | sed 's/.*Version = "\(.*\)"/\1/')
+SQLITE_VECTOR_VERSION=$(grep 'SQLiteVectorVersion = ' main.go | sed 's/.*SQLiteVectorVersion = "\(.*\)"/\1/')
 
 if [ -z "$VERSION" ]; then
     echo -e "${RED}Error: Could not extract version from main.go${NC}"
+    exit 1
+fi
+
+if [ -z "$SQLITE_VECTOR_VERSION" ]; then
+    echo -e "${RED}Error: Could not extract SQLiteVectorVersion from main.go${NC}"
     exit 1
 fi
 
@@ -80,6 +86,7 @@ TAG="v${VERSION}"
 echo -e "${GREEN}=== Redunce Release ===${NC}"
 echo -e "Version: ${YELLOW}${VERSION}${NC}"
 echo -e "Tag: ${YELLOW}${TAG}${NC}"
+echo -e "SQLite-Vector: ${YELLOW}${SQLITE_VECTOR_VERSION}${NC}"
 echo ""
 
 # Check if working directory is clean
@@ -132,7 +139,7 @@ echo ""
 
 # Step 3: Calculate SHA256 of sqlite-vector
 echo -e "${GREEN}Step 3: Calculating SHA256 of sqlite-vector${NC}"
-SQLITE_VECTOR_URL="https://github.com/sqliteai/sqlite-vector/releases/download/0.9.52/vector-apple-xcframework-0.9.52.zip"
+SQLITE_VECTOR_URL="https://github.com/sqliteai/sqlite-vector/releases/download/${SQLITE_VECTOR_VERSION}/vector-apple-xcframework-${SQLITE_VECTOR_VERSION}.zip"
 echo "URL: ${SQLITE_VECTOR_URL}"
 SQLITE_VECTOR_SHA256=$(curl -L "$SQLITE_VECTOR_URL" 2>/dev/null | shasum -a 256 | awk '{print $1}')
 
@@ -154,21 +161,46 @@ fi
 # Create a backup
 cp "$FORMULA_PATH" "${BACKUP_PATH}"
 
-# Replace the placeholders
-sed -i '' "s/\${VERSION}/${TAG}/" "$FORMULA_PATH"
-sed -i '' "s/\${REDUNCE_SHA256}/${REDUNCE_SHA256}/" "$FORMULA_PATH"
-sed -i '' "s/\${SQLITE_VECTOR_SHA256}/${SQLITE_VECTOR_SHA256}/" "$FORMULA_PATH"
+# Update version in URL (e.g., v0.1.0 -> v0.1.1)
+sed -i '' -E "s|refs/tags/v[0-9]+\.[0-9]+\.[0-9]+|refs/tags/${TAG}|" "$FORMULA_PATH"
+
+# Update redunce tarball sha256 (first sha256 after url line)
+sed -i '' -E "0,/sha256 \"[a-f0-9]{64}\"/s//sha256 \"${REDUNCE_SHA256}\"/" "$FORMULA_PATH"
+
+# Update sqlite-vector version in URL (e.g., 0.9.52 -> 0.9.53)
+sed -i '' -E "s|sqlite-vector/releases/download/[0-9]+\.[0-9]+\.[0-9]+/vector-apple-xcframework-[0-9]+\.[0-9]+\.[0-9]+\.zip|sqlite-vector/releases/download/${SQLITE_VECTOR_VERSION}/vector-apple-xcframework-${SQLITE_VECTOR_VERSION}.zip|" "$FORMULA_PATH"
+
+# Update sqlite-vector sha256 (inside the resource block)
+awk -v new_sha="${SQLITE_VECTOR_SHA256}" '
+    /sqlite-vector/ { in_resource = 1 }
+    in_resource && /sha256/ {
+        sub(/sha256 "[a-f0-9]+"/, "sha256 \"" new_sha "\"")
+        in_resource = 0
+    }
+    { print }
+' "$FORMULA_PATH" > "${FORMULA_PATH}.tmp" && mv "${FORMULA_PATH}.tmp" "$FORMULA_PATH"
+
 FORMULA_MODIFIED=true
 
-# Verify replacements
-if grep -q '\${VERSION}' "$FORMULA_PATH" || grep -q '\${REDUNCE_SHA256}' "$FORMULA_PATH" || grep -q '\${SQLITE_VECTOR_SHA256}' "$FORMULA_PATH"; then
-    echo -e "${RED}Error: Failed to replace placeholders in ${FORMULA_PATH}${NC}"
+# Verify updates
+if ! grep -q "refs/tags/${TAG}" "$FORMULA_PATH"; then
+    echo -e "${RED}Error: Failed to update version in ${FORMULA_PATH}${NC}"
     mv "${BACKUP_PATH}" "$FORMULA_PATH"
     FORMULA_MODIFIED=false
     exit 1
 fi
 
-echo "Updated ${FORMULA_PATH} with version and SHA256 values"
+if ! grep -q "sha256 \"${REDUNCE_SHA256}\"" "$FORMULA_PATH"; then
+    echo -e "${RED}Error: Failed to update redunce SHA256 in ${FORMULA_PATH}${NC}"
+    mv "${BACKUP_PATH}" "$FORMULA_PATH"
+    FORMULA_MODIFIED=false
+    exit 1
+fi
+
+echo "Updated ${FORMULA_PATH}:"
+echo "  - Version: ${TAG}"
+echo "  - Redunce SHA256: ${REDUNCE_SHA256:0:16}..."
+echo "  - SQLite-Vector SHA256: ${SQLITE_VECTOR_SHA256:0:16}..."
 echo ""
 
 # Step 5: Commit the updated formula

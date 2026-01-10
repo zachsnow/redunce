@@ -4,9 +4,11 @@ How to release `redunce` via Homebrew.
 
 ## Releasing a New Version
 
-1. Update the version in `main.go`
+1. Update the version in `main.go` (the `Version` constant is the source of truth)
 
-2. Run the release script:
+2. Commit and ensure working directory is clean
+
+3. Run the release script:
 
    ```bash
    ./release.sh
@@ -15,11 +17,17 @@ How to release `redunce` via Homebrew.
    This will:
    - Tag the current commit with the version from `main.go`
    - Push the tag to GitHub
-   - Calculate SHA256 checksums for the release tarball and sqlite-vector
-   - Update `Formula/redunce.rb` with the correct SHA256 values
+   - Wait for GitHub to process the tag
+   - Download the release tarball and calculate its SHA256
+   - Calculate SHA256 for the sqlite-vector dependency
+   - Update `Formula/redunce.rb` with the new version and SHA256 values
    - Commit and push the updated formula
+   - Optionally test the formula by building from source
 
-3. Create a GitHub release at the generated URL
+4. Create a GitHub release at the generated URL
+
+The formula always contains the values from the most recent release. The release
+script uses regex to find and replace version numbers and SHA256 hashes.
 
 Users install with:
 
@@ -35,10 +43,14 @@ redunce/
 ├── Formula/
 │   └── redunce.rb      # Homebrew formula
 ├── release.sh          # Automated release script
-└── main.go             # Version source of truth
+└── main.go             # Version constants (source of truth)
 ```
 
 The formula is maintained in the same repository as the source code.
+
+Version constants in `main.go`:
+- `Version` - The redunce version (e.g., "0.1.1")
+- `SQLiteVectorVersion` - The sqlite-vector dependency version (e.g., "0.9.52")
 
 ## Extension Dependency
 

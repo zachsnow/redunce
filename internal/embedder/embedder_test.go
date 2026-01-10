@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/ZachSnow/redunce/internal/store"
+	"github.com/ZachSnow/redunce/internal/util"
 )
 
 func TestPreprocessCode(t *testing.T) {
@@ -127,8 +128,8 @@ func TestTFIDFEmbedBatch(t *testing.T) {
 	}
 
 	// Similar chunks (foo and bar) should have higher similarity than dissimilar
-	simFooBar := cosineSim(embeddings[0], embeddings[1])
-	simFooDiff := cosineSim(embeddings[0], embeddings[2])
+	simFooBar := util.CosineSimilarity(embeddings[0], embeddings[1])
+	simFooDiff := util.CosineSimilarity(embeddings[0], embeddings[2])
 
 	if simFooBar <= simFooDiff {
 		t.Errorf("Expected similar code similarity (%v) > dissimilar code similarity (%v)",
@@ -159,21 +160,4 @@ func TestTFIDFNormalization(t *testing.T) {
 	if math.Abs(norm-1.0) > 1e-9 && norm != 0 {
 		t.Errorf("Vector norm = %v, expected 1.0 (or 0 for empty)", norm)
 	}
-}
-
-// Helper function to compute cosine similarity
-func cosineSim(a, b []float64) float64 {
-	if len(a) != len(b) {
-		return 0.0
-	}
-	var dot, normA, normB float64
-	for i := range a {
-		dot += a[i] * b[i]
-		normA += a[i] * a[i]
-		normB += b[i] * b[i]
-	}
-	if normA == 0 || normB == 0 {
-		return 0.0
-	}
-	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
 }

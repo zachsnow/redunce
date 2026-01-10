@@ -31,6 +31,10 @@ const (
 
 	// Version is the application version (source of truth for releases).
 	Version = "0.1.1"
+
+	// SQLiteVectorVersion is the sqlite-vector extension version.
+	// Used by release.sh to download the correct version for Homebrew.
+	SQLiteVectorVersion = "0.9.52"
 )
 
 // Global verbose flag

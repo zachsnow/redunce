@@ -133,7 +133,7 @@ func LanguageFromExtension(ext string) string {
 		".cc":  "cpp",
 		".cxx": "cpp",
 		".hpp": "cpp",
-		".hxx": "hpp",
+		".hxx": "cpp",
 		// Web
 		".js":     "javascript",
 		".jsx":    "javascript",
