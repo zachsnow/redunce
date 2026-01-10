@@ -16,12 +16,14 @@ class Redunce < Formula
   def install
     # Install sqlite-vector extension to Homebrew's lib directory
     resource("sqlite-vector-darwin").stage do
-      # Extract the dylib from the framework
-      system "cp", "vector.xcframework/macos-arm64_x86_64/vector.framework/vector", "libvector.dylib"
-      # Code sign it
+      # Find the vector binary (Homebrew strips top-level directory when staging)
+      vector_path = Dir.glob("**/macos-arm64_x86_64/vector.framework/vector").first
+      odie "Could not find sqlite-vector binary" if vector_path.nil?
+
+      # Copy and code sign
+      system "cp", vector_path, "libvector.dylib"
       system "codesign", "--remove-signature", "libvector.dylib"
       system "codesign", "-s", "-", "libvector.dylib"
-      # Install to Homebrew's lib directory so SQLite can find it
       lib.install "libvector.dylib"
     end
 
