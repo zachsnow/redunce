@@ -243,23 +243,41 @@ func LoadClusters(db *store.Store, scoreStrategy ScoreStrategy) ([]*Cluster, err
 		return nil, fmt.Errorf("failed to get clusters: %w", err)
 	}
 
+	if len(rawClusters) == 0 {
+		return nil, nil
+	}
+
+	// Collect all chunk IDs for batch loading
+	allChunkIDs := make([]int64, 0)
+	for _, raw := range rawClusters {
+		allChunkIDs = append(allChunkIDs, raw.CanonicalChunkID)
+		allChunkIDs = append(allChunkIDs, raw.ChunkIDs...)
+	}
+
+	// Batch fetch all chunks
+	chunkMap, err := db.GetChunksByIDs(allChunkIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to batch load chunks: %w", err)
+	}
+
+	// Build clusters using the chunk map
 	var clusters []*Cluster
 	for _, raw := range rawClusters {
-		// Get canonical chunk
-		canonical, err := db.GetChunkByID(raw.CanonicalChunkID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get canonical chunk: %w", err)
+		canonical, ok := chunkMap[raw.CanonicalChunkID]
+		if !ok {
+			return nil, fmt.Errorf("canonical chunk %d not found", raw.CanonicalChunkID)
 		}
 
-		// Get all chunks in cluster
 		var chunks []*store.Chunk
 		for i, chunkID := range raw.ChunkIDs {
-			chunk, err := db.GetChunkByID(chunkID)
-			if err != nil {
-				return nil, fmt.Errorf("failed to get chunk: %w", err)
+			chunk, ok := chunkMap[chunkID]
+			if !ok {
+				return nil, fmt.Errorf("chunk %d not found", chunkID)
 			}
-			chunk.Similarity = raw.Similarities[i]
-			chunks = append(chunks, chunk)
+			// Create a copy to avoid modifying the map entry
+			chunkCopy := *chunk
+			chunkCopy.Similarity = raw.Similarities[i]
+			chunks = append(chunks, &chunkCopy)
 		}
 
 		c := &Cluster{
@@ -270,7 +288,6 @@ func LoadClusters(db *store.Store, scoreStrategy ScoreStrategy) ([]*Cluster, err
 			AvgSimilarity:  raw.AvgSimilarity,
 			MaxSimilarity:  raw.MaxSimilarity,
 		}
-		// Compute and store score
 		c.Score = c.ComputeScore(scoreStrategy)
 		clusters = append(clusters, c)
 	}
@@ -278,143 +295,6 @@ func LoadClusters(db *store.Store, scoreStrategy ScoreStrategy) ([]*Cluster, err
 	// Sort by score descending
 	sort.Slice(clusters, func(i, j int) bool {
 		return clusters[i].Score > clusters[j].Score
-	})
-
-	return clusters, nil
-}
-
-// FindClusters finds clusters of similar chunks
-func FindClusters(db *store.Store, threshold float64, ignoreThreshold float64, verbose bool) ([]*Cluster, error) {
-	// Delete existing clusters
-	if err := db.DeleteAllClusters(); err != nil {
-		return nil, fmt.Errorf("failed to delete existing clusters: %w", err)
-	}
-
-	// Quantize vectors for fast searching (if sqlite-vector is loaded)
-	if err := db.QuantizeVectors(); err != nil {
-		return nil, fmt.Errorf("failed to quantize vectors: %w", err)
-	}
-
-	// Get all chunks ordered by code length descending
-	chunks, err := db.GetAllChunks()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get chunks: %w", err)
-	}
-
-	var clusters []*Cluster
-	totalChunks := len(chunks)
-	processed := 0
-	progressInterval := util.GetProgressInterval(totalChunks)
-
-	// Process each chunk
-	for _, chunk := range chunks {
-		processed++
-
-		// Show progress if verbose mode is enabled
-		if verbose && (processed%progressInterval == 0 || processed == totalChunks) {
-			fmt.Fprintf(os.Stderr, "  Processed %d/%d chunks, found %d clusters so far\n", processed, totalChunks, len(clusters))
-		}
-
-		// Check if chunk is already in a cluster
-		inCluster, err := db.IsChunkInCluster(chunk.ID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to check if chunk is in cluster: %w", err)
-		}
-		if inCluster {
-			continue
-		}
-
-		// Check if this chunk is ignored (Phase 1: SHA, Phase 2: similarity)
-		ignored, err := db.IsIgnoredBySimilarity(chunk, ignoreThreshold)
-		if err != nil {
-			return nil, fmt.Errorf("failed to check if chunk is ignored: %w", err)
-		}
-		if ignored {
-			continue
-		}
-
-		// Find similar chunks
-		similarChunks, err := db.FindSimilarChunks(chunk.ID, DefaultSimilarChunksLimit)
-		if err != nil {
-			return nil, fmt.Errorf("failed to find similar chunks: %w", err)
-		}
-
-		// Filter by threshold and exclude chunks already in clusters or ignored
-		var validSimilar []*store.Chunk
-		for _, similar := range similarChunks {
-			if similar.Similarity >= threshold {
-				inCluster, err := db.IsChunkInCluster(similar.ID)
-				if err != nil {
-					return nil, fmt.Errorf("failed to check if chunk is in cluster: %w", err)
-				}
-				if inCluster {
-					continue
-				}
-
-				// Check if this similar chunk is ignored (Phase 1: SHA, Phase 2: similarity)
-				ignored, err := db.IsIgnoredBySimilarity(similar, ignoreThreshold)
-				if err != nil {
-					return nil, fmt.Errorf("failed to check if chunk is ignored: %w", err)
-				}
-				if !ignored {
-					validSimilar = append(validSimilar, similar)
-				}
-			}
-		}
-
-		// Only create a cluster if we have at least one similar chunk
-		// (canonical chunk + similar chunks = at least 2 chunks total)
-		if len(validSimilar) > 0 {
-			// Calculate statistics
-			var avgSim, maxSim float64
-			for _, similar := range validSimilar {
-				avgSim += similar.Similarity
-				if similar.Similarity > maxSim {
-					maxSim = similar.Similarity
-				}
-			}
-			avgSim /= float64(len(validSimilar))
-
-			// Create cluster in database
-			clusterID, err := db.CreateCluster(chunk.ID, avgSim, maxSim, len(validSimilar)+1)
-			if err != nil {
-				return nil, fmt.Errorf("failed to create cluster: %w", err)
-			}
-
-			// Add canonical chunk to cluster
-			if err := db.AddChunkToCluster(clusterID, chunk.ID, 1.0); err != nil {
-				return nil, fmt.Errorf("failed to add canonical chunk to cluster: %w", err)
-			}
-
-			// Add similar chunks to cluster
-			clusterChunks := []*store.Chunk{chunk}
-			for _, similar := range validSimilar {
-				if err := db.AddChunkToCluster(clusterID, similar.ID, similar.Similarity); err != nil {
-					return nil, fmt.Errorf("failed to add chunk to cluster: %w", err)
-				}
-				clusterChunks = append(clusterChunks, similar)
-			}
-
-			// Create cluster object
-			cluster := &Cluster{
-				ID:             clusterID,
-				ClusterID:      chunk.SHA, // Use canonical chunk's SHA as cluster ID
-				CanonicalChunk: chunk,
-				Chunks:         clusterChunks,
-				AvgSimilarity:  avgSim,
-				MaxSimilarity:  maxSim,
-			}
-
-			// Only add clusters with more than 1 chunk
-			if len(clusterChunks) > 1 {
-				clusters = append(clusters, cluster)
-			}
-		}
-	}
-
-	// Sort clusters by canonical chunk length (descending)
-	sort.Slice(clusters, func(i, j int) bool {
-		return len(clusters[i].CanonicalChunk.Code) > len(clusters[j].CanonicalChunk.Code)
 	})
 
 	return clusters, nil

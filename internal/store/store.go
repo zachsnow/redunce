@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/mattn/go-sqlite3"
@@ -338,6 +339,49 @@ func (s *Store) GetChunkByID(id int64) (*Chunk, error) {
 	}
 
 	return chunk, nil
+}
+
+// GetChunksByIDs retrieves multiple chunks by their IDs in a single query.
+// Returns a map from chunk ID to Chunk for efficient lookup.
+func (s *Store) GetChunksByIDs(ids []int64) (map[int64]*Chunk, error) {
+	if len(ids) == 0 {
+		return make(map[int64]*Chunk), nil
+	}
+
+	// Build query with placeholders
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	query := fmt.Sprintf(`
+		SELECT id, path, language, start_line, end_line, code, sha, embedding
+		FROM chunks
+		WHERE id IN (%s)
+	`, strings.Join(placeholders, ","))
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query chunks: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[int64]*Chunk)
+	for rows.Next() {
+		chunk := &Chunk{}
+		var embeddingBytes []byte
+		if err := rows.Scan(&chunk.ID, &chunk.Path, &chunk.Language, &chunk.StartLine, &chunk.EndLine, &chunk.Code, &chunk.SHA, &embeddingBytes); err != nil {
+			return nil, fmt.Errorf("failed to scan chunk: %w", err)
+		}
+		if len(embeddingBytes) > 0 {
+			chunk.Embedding = deserializeVector(embeddingBytes)
+		}
+		result[chunk.ID] = chunk
+	}
+
+	return result, rows.Err()
 }
 
 // IsSubset returns true if chunk a is a subset of chunk b or vice versa
