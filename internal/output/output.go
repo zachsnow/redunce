@@ -123,7 +123,7 @@ func (f *MarkdownFormatter) Format(w io.Writer, clusters []*cluster.Cluster) err
 			}
 		}
 
-		fmt.Fprintln(w, "---\n")
+		fmt.Fprintln(w, "---")
 	}
 
 	return nil
