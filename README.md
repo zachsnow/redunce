@@ -9,7 +9,7 @@ large-scale changes to a codebase.
 # Installation
 
 ```bash
-brew tap ZachSnow/redunce https://github.com/ZachSnow/redunce
+brew tap zachsnow/redunce https://github.com/zachsnow/redunce
 brew install redunce
 ```
 
@@ -66,6 +66,27 @@ with `.gitignore`, and have a higher precedence.
 
 Use `--no-default-ignore` to skip default ignore patterns.
 
+## Skipping Clusters
+
+When `redunce` reports a cluster of similar code, you have two options:
+
+1. **Refactor** - Extract common code to eliminate duplication
+2. **Skip** - Mark the cluster as intentional/acceptable duplication
+
+To skip a cluster (mark it as acceptable):
+
+```bash
+# By cluster index (from output)
+redunce --skip 1
+
+# By cluster SHA
+redunce --skip a6adf109
+```
+
+Skipped clusters are remembered and won't be reported again, even after refactoring or re-chunking the code. Use `--skip-threshold` (default 0.95) to control how similar a new chunk must be to a skipped one to also be skipped.
+
+**Note:** "Ignoring" (via `.redunceignore`) prevents files from being analyzed at all, while "skipping" marks a specific cluster of similar code as acceptable.
+
 ## Claude Code Integration
 
 `redunce` includes built-in slash commands for [Claude Code](https://claude.ai/claude-code), making it easy to systematically eliminate code duplication using an AI-assisted workflow.
@@ -87,11 +108,11 @@ This installs two slash commands:
 
 In any project, simply type `/redunce` or `/redunce-approve` in Claude Code, and Claude will:
 
-1. **Set up `.redunceignore`** - Automatically identify and add patterns for test files, generated code, etc.
+1. **Set up `.redunceignore`** - Automatically identify and add file patterns for test files, generated code, etc.
 2. **Run iterative analysis** - Execute `redunce . -limit 10` to find duplication clusters
 3. **Evaluate clusters** - For each cluster, decide whether to:
-   - Add it to `.redunceignore` (intentional duplication)
-   - Refactor it to eliminate duplication (preferring changes that reduce code size)
+   - **Skip** (`--skip`) - Mark the cluster as acceptable (similar code that shouldn't be refactored)
+   - **Refactor** - Extract common code to eliminate duplication
 4. **Apply changes** - In approve mode, changes are automatic; in interactive mode, Claude asks for approval
 5. **Repeat** - Continue for 3-5 iterations or until no progress is made
 6. **Check in** - Ask if you want to continue

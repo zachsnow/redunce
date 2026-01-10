@@ -2,21 +2,29 @@
 
 You are going to help the user reduce code duplication using the `redunce` tool.
 
+## Key Concepts
+
+There are two distinct mechanisms:
+
+1. **Ignoring files** (`.redunceignore`) - Excludes entire files/directories from analysis
+2. **Skipping clusters** (`--skip`) - Marks a specific duplication cluster as acceptable
+
 ## Overview
 
 Redunce is a code duplication detection tool that clusters similar code blocks. Your job is to iteratively:
 
-1. Identify and configure appropriate ignore patterns
+1. Configure `.redunceignore` to exclude files that shouldn't be analyzed
 2. Find duplication clusters
-3. Propose refactorings or additions to ignore patterns
+3. Propose refactorings or skipping clusters
 4. Apply approved changes
 5. Repeat until no further improvements are possible
 
 ## Initial Setup
 
-First, check if a `.redunceignore` file exists. If not, create one with sensible defaults based on the project structure.
+First, check if a `.redunceignore` file exists. If not, create one with sensible defaults based on the
+project structure.
 
-Then evaluate whether any file patterns should be added to `.redunceignore`. Consider:
+Evaluate whether any file patterns should be added to `.redunceignore`. Consider:
 
 - Test files that intentionally have duplicated setup/teardown code
 - Generated code
@@ -32,7 +40,7 @@ Repeat the following steps 3-5 times, or until no further progress is possible:
 
 ### 1. Run Redunce
 
-Run: `./redunce . --limit 10`
+Run: `redunce . --limit 10`
 
 This will output clusters of similar code. Each cluster represents potential duplication.
 
@@ -40,7 +48,7 @@ This will output clusters of similar code. Each cluster represents potential dup
 
 For each cluster, evaluate:
 
-- **Should it be ignored?** Some duplication is intentional (e.g., similar test cases, boilerplate)
+- **Should it be skipped?** Some duplication is intentional (e.g., similar but semantically different code)
 - **Can it be refactored?** Look for opportunities to extract common patterns
 - **Impact on maintainability**: Prefer refactorings that make code smaller and more maintainable
 
@@ -48,12 +56,17 @@ For each cluster, evaluate:
 
 For each cluster, propose ONE of:
 
-a) **Add to `.redunceignore`**: If the duplication is intentional/acceptable
+a) **Update `.redunceignore`**: If the duplication is an entire file and is intentional/acceptable
 
-- Provide the file pattern or specific files to ignore
+- Add the file path to the project-level `.redunceignore`
 - Explain why this duplication should be preserved
 
-b) **Refactor**: If the code can be deduplicated
+b) **Skip the cluster**: If the duplication is intentional/acceptable
+
+- Run `redunce --skip <cluster index or SHA>`
+- Explain why this duplication should be preserved
+
+c) **Refactor**: If the code can be deduplicated
 
 - Provide a concrete refactoring plan
 - Show a sketch of the proposed abstraction
@@ -61,11 +74,13 @@ b) **Refactor**: If the code can be deduplicated
 - Estimate lines saved
 - Prioritize refactorings that significantly reduce code size
 
+d) **Defer**: If unsure
+
 ### 4. Apply Approved Changes
 
 Wait for user approval, then apply the changes:
 
-- Update `.redunceignore` if approved
+- Skip clusters using `redunce --skip` if approved
 - Implement refactorings if approved
 - Run tests if they exist
 
@@ -78,7 +93,7 @@ After applying changes, re-run redunce to see the new state.
 After 3-5 iterations, check in with the user:
 
 - Summarize what was accomplished
-- Show metrics (total lines reduced, clusters addressed)
+- Show metrics (total lines reduced, clusters addressed, clusters skipped)
 - Ask if they want to continue for another round
 
 ## Guidelines

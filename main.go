@@ -25,12 +25,12 @@ const (
 	// Tuned for OpenAI rate limits and memory efficiency.
 	BatchSize = 64
 
-	// MaxClusterIndex is the maximum cluster index accepted by --ignore flag.
+	// MaxClusterIndex is the maximum cluster index accepted by --skip flag.
 	// Indices above this are treated as SHA prefixes instead of cluster numbers.
 	MaxClusterIndex = 1000
 
 	// Version is the application version (source of truth for releases).
-	Version = "0.1.0"
+	Version = "0.1.1"
 )
 
 // Global verbose flag
@@ -67,7 +67,7 @@ func findClusterBySHAPrefix(clusters []*cluster.Cluster, prefix string) []*clust
 
 type Config struct {
 	Threshold      float64
-	IgnoreThreshold   float64
+	SkipThreshold  float64
 	EmbedMethod    string
 	Format         string
 	Score          string
@@ -80,8 +80,8 @@ type Config struct {
 	DBPath         string
 	Reset          bool
 	Query          string
-	IgnoreCluster     string
-	PrintIgnore       bool
+	SkipCluster    string
+	PrintIgnore    bool
 	PrintFiles        bool
 	PrintChunks       bool
 	PrintChunk        string
@@ -103,7 +103,7 @@ func main() {
 	flag.BoolVar(&showVersion, "version", false, "show version and exit")
 	flag.BoolVar(&installClaudeCommands, "install-claude-commands", false, "install Claude Code slash commands (usage: --install-claude-commands [directory], defaults to ~)")
 	flag.Float64Var(&cfg.Threshold, "threshold", 0.85, "similarity threshold (0-1)")
-	flag.Float64Var(&cfg.IgnoreThreshold, "ignore-threshold", 0.95, "ignore similarity threshold (0-1), higher than clustering threshold")
+	flag.Float64Var(&cfg.SkipThreshold, "skip-threshold", 0.95, "skip similarity threshold (0-1), higher than clustering threshold")
 	flag.StringVar(&cfg.EmbedMethod, "embed", "local", "embedding method: local|openai")
 	flag.StringVar(&cfg.Format, "format", "md", "output format: json|md")
 	flag.StringVar(&cfg.Score, "score", "default", "cluster scoring strategy: old|impact|default")
@@ -118,7 +118,7 @@ func main() {
 	flag.StringVar(&cfg.DBPath, "db", "redunce.db", "database file path")
 	flag.BoolVar(&cfg.Reset, "reset", false, "reset database before running")
 	flag.StringVar(&cfg.Query, "q", "", "search query mode")
-	flag.StringVar(&cfg.IgnoreCluster, "ignore", "", "mark a cluster as ignored by index (1-1000) or cluster ID (SHA)")
+	flag.StringVar(&cfg.SkipCluster, "skip", "", "mark a cluster as skipped by index (1-1000) or cluster ID (SHA)")
 	flag.BoolVar(&cfg.PrintIgnore, "print-ignore", false, "print resolved ignore patterns and exit")
 	flag.BoolVar(&cfg.PrintFiles, "print-files", false, "print scanned files and exit")
 	flag.BoolVar(&cfg.PrintChunks, "print-chunks", false, "print chunks and exit")
@@ -231,8 +231,8 @@ func main() {
 		return
 	}
 
-	// Handle --ignore flag
-	if cfg.IgnoreCluster != "" {
+	// Handle --skip flag
+	if cfg.SkipCluster != "" {
 		// Open database
 		db, err := store.NewStore(cfg.DBPath, false)
 		if err != nil {
@@ -244,7 +244,7 @@ func main() {
 		var targetChunk *store.Chunk
 
 		// Check if the input is a small integer (cluster index)
-		if clusterIndex, err := strconv.Atoi(cfg.IgnoreCluster); err == nil && clusterIndex > 0 && clusterIndex <= MaxClusterIndex {
+		if clusterIndex, err := strconv.Atoi(cfg.SkipCluster); err == nil && clusterIndex > 0 && clusterIndex <= MaxClusterIndex {
 			// Treat as cluster index - load existing clusters
 			clusters, err := cluster.LoadClusters(db, cluster.ScoreStrategy(cfg.Score))
 			if err != nil {
@@ -265,7 +265,7 @@ func main() {
 			// Use the nth cluster (1-indexed)
 			targetCluster := clusters[clusterIndex-1]
 			targetChunk = targetCluster.CanonicalChunk
-			fmt.Printf("Ignoring cluster %d: %s\n", clusterIndex, util.ShortSHA(targetChunk.SHA))
+			fmt.Printf("Skipping cluster %d: %s\n", clusterIndex, util.ShortSHA(targetChunk.SHA))
 		} else {
 			// Treat as SHA (partial or full)
 			chunks, err := db.GetAllChunks()
@@ -274,13 +274,13 @@ func main() {
 				os.Exit(1)
 			}
 
-			matches := findChunkBySHAPrefix(chunks, cfg.IgnoreCluster)
+			matches := findChunkBySHAPrefix(chunks, cfg.SkipCluster)
 			if len(matches) == 0 {
-				fmt.Fprintf(os.Stderr, "Error: cluster ID %s not found\n", cfg.IgnoreCluster)
+				fmt.Fprintf(os.Stderr, "Error: cluster ID %s not found\n", cfg.SkipCluster)
 				os.Exit(1)
 			}
 			if len(matches) > 1 {
-				fmt.Fprintf(os.Stderr, "Error: ambiguous cluster ID %s matches %d clusters:\n", cfg.IgnoreCluster, len(matches))
+				fmt.Fprintf(os.Stderr, "Error: ambiguous cluster ID %s matches %d clusters:\n", cfg.SkipCluster, len(matches))
 				for _, match := range matches {
 					fmt.Fprintf(os.Stderr, "  %s\n", util.ShortSHA(match.SHA))
 				}
@@ -290,14 +290,14 @@ func main() {
 			targetChunk = matches[0]
 		}
 
-		// Add to ignore list
+		// Add to skip list (stored in ignores table internally)
 		err = db.AddIgnore(targetChunk.SHA, targetChunk.Code, targetChunk.Embedding)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to add ignore: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error: failed to skip cluster: %v\n", err)
 			os.Exit(1)
 		}
 
-		fmt.Printf("Cluster %s has been marked as ignored.\n", util.ShortSHA(targetChunk.SHA))
+		fmt.Printf("Cluster %s has been marked as skipped.\n", util.ShortSHA(targetChunk.SHA))
 		return
 	}
 
@@ -468,7 +468,7 @@ func run(cfg Config, paths []string) error {
 
 	// Cluster new chunks incrementally
 	logVerbose("Clustering %d new chunks...\n", len(newChunkIDs))
-	clustered, err := cluster.ClusterNewChunks(db, newChunkIDs, cfg.Threshold, cfg.IgnoreThreshold, cfg.Verbose)
+	clustered, err := cluster.ClusterNewChunks(db, newChunkIDs, cfg.Threshold, cfg.SkipThreshold, cfg.Verbose)
 	if err != nil {
 		return fmt.Errorf("failed to cluster chunks: %w", err)
 	}
@@ -816,41 +816,41 @@ func processFiles(cfg Config, db *store.Store, files []string, emb embedder.Embe
 		logVerbose("  Embedded and stored %d/%d chunks\n", end, len(chunksToEmbed))
 	}
 
-	// Step 4: If we re-embedded all chunks, also re-embed ignored chunks
+	// Step 4: If we re-embedded all chunks, also re-embed skipped chunks
 	if shouldReembedAll {
-		ignoredChunks, err := db.GetAllIgnores()
+		skippedChunks, err := db.GetAllIgnores()
 		if err != nil {
-			return 0, nil, fmt.Errorf("failed to get ignored chunks: %w", err)
+			return 0, nil, fmt.Errorf("failed to get skipped chunks: %w", err)
 		}
 
-		if len(ignoredChunks) > 0 {
-			logVerbose("Re-embedding %d ignored chunks...\n", len(ignoredChunks))
+		if len(skippedChunks) > 0 {
+			logVerbose("Re-embedding %d skipped chunks...\n", len(skippedChunks))
 
-			for i := 0; i < len(ignoredChunks); i += BatchSize {
+			for i := 0; i < len(skippedChunks); i += BatchSize {
 				end := i + BatchSize
-				if end > len(ignoredChunks) {
-					end = len(ignoredChunks)
+				if end > len(skippedChunks) {
+					end = len(skippedChunks)
 				}
-				batch := ignoredChunks[i:end]
+				batch := skippedChunks[i:end]
 
 				embeddings, err := emb.EmbedBatch(batch)
 				if err != nil {
-					return 0, nil, fmt.Errorf("failed to embed ignored chunks: %w", err)
+					return 0, nil, fmt.Errorf("failed to embed skipped chunks: %w", err)
 				}
 
-				// Update embeddings in the ignores table
+				// Update embeddings in the skips table (internally called ignores)
 				for j, chunk := range batch {
 					chunk.Embedding = embeddings[j]
-					// Remove and re-add the ignore with new embedding
+					// Remove and re-add with new embedding
 					if err := db.RemoveIgnore(chunk.SHA); err != nil {
-						return 0, nil, fmt.Errorf("failed to remove old ignore: %w", err)
+						return 0, nil, fmt.Errorf("failed to remove old skip: %w", err)
 					}
 					if err := db.AddIgnore(chunk.SHA, chunk.Code, chunk.Embedding); err != nil {
-						return 0, nil, fmt.Errorf("failed to update ignored chunk: %w", err)
+						return 0, nil, fmt.Errorf("failed to update skipped chunk: %w", err)
 					}
 				}
 
-				logVerbose("  Re-embedded %d/%d ignored chunks\n", end, len(ignoredChunks))
+				logVerbose("  Re-embedded %d/%d skipped chunks\n", end, len(skippedChunks))
 			}
 		}
 	}
@@ -973,14 +973,14 @@ func printUsage() {
 	fmt.Println("  2. For each reported cluster, tell your LLM to either:")
 	fmt.Println("     a) Refactor the code to eliminate duplication, OR")
 	fmt.Println("     b) Mark it as intentional/acceptable:")
-	fmt.Printf("        $ %s --ignore 1          # Ignore first cluster\n", binName)
-	fmt.Printf("        $ %s --ignore a6adf109  # Ignore by SHA\n", binName)
+	fmt.Printf("        $ %s --skip 1          # Skip first cluster\n", binName)
+	fmt.Printf("        $ %s --skip a6adf109  # Skip by SHA\n", binName)
 	fmt.Println()
 	fmt.Println("  3. Repeat until no clusters remain:")
 	fmt.Printf("     $ %s .\n", binName)
 	fmt.Println("     # No clusters found.")
 	fmt.Println()
-	fmt.Println("  Ignored clusters survive refactoring and re-chunking. Use higher")
-	fmt.Println("  --ignore-threshold (default 0.95) to catch renamed/slightly modified")
-	fmt.Println("  duplicates that were previously ignored.")
+	fmt.Println("  Skipped clusters survive refactoring and re-chunking. Use higher")
+	fmt.Println("  --skip-threshold (default 0.95) to catch renamed/slightly modified")
+	fmt.Println("  duplicates that were previously skipped.")
 }

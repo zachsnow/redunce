@@ -2,22 +2,30 @@
 
 You are going to help the user reduce code duplication using the redunce tool in AUTO-APPROVE mode.
 
+## Key Concepts
+
+There are two distinct mechanisms:
+
+1. **Ignoring files** (`.redunceignore`) - Excludes entire files/directories from analysis
+2. **Skipping clusters** (`--skip`) - Marks a specific duplication cluster as acceptable
+
 ## Overview
 
-This is the automatic mode of redunce. You will make decisions about ignoring or refactoring duplication clusters WITHOUT asking for approval at each step. Only check in with the user between major iterations.
+This is the automatic mode of redunce. You will make decisions about skipping or refactoring duplication clusters WITHOUT asking for approval at each step. Only check in with the user between major iterations.
 
 Redunce is a code duplication detection tool that clusters similar code blocks. Your job is to iteratively:
-1. Identify and configure appropriate ignore patterns
+1. Configure `.redunceignore` to exclude files that shouldn't be analyzed
 2. Find duplication clusters
-3. Automatically decide whether to ignore or refactor
+3. Automatically decide whether to skip or refactor
 4. Apply changes automatically
 5. Repeat until no further improvements are possible
 
 ## Initial Setup
 
-First, check if a `.redunceignore` file exists. If not, create one with sensible defaults based on the project structure.
+First, check if a `.redunceignore` file exists. If not, create one with sensible defaults based on the project
+structure.
 
-Then evaluate whether any file patterns should be added to `.redunceignore`. Consider:
+Then evaluate whether any additional file patterns should be added to `.redunceignore`. Consider:
 - Test files that intentionally have duplicated setup/teardown code
 - Generated code
 - Vendor/third-party code
@@ -32,7 +40,7 @@ Repeat the following steps 3-5 times, or until no further progress is possible:
 
 ### 1. Run Redunce
 
-Run: `./redunce . -limit 10`
+Run: `redunce . --limit 10`
 
 This will output clusters of similar code. Each cluster represents potential duplication.
 
@@ -40,24 +48,29 @@ This will output clusters of similar code. Each cluster represents potential dup
 
 For each cluster, **automatically decide**:
 
-a) **Add to `.redunceignore`**: If the duplication is intentional/acceptable
+a) **Add to `.redunceignore`**: If the duplication is an entire file, and is intentional/acceptable
    - Common patterns: test files, similar but semantically different code, acceptable boilerplate
    - Add pattern to `.redunceignore` immediately
    - Log: "Ignoring cluster X: [reason]"
 
-b) **Refactor**: If the code can be deduplicated
+b) **Skip the cluster**: If the duplication is intentional/acceptable
+   - Similar but semantically different code, acceptable boilerplate
+   - Run `redunce --skip <index>` immediately
+   - Log: "Skipped cluster X: [reason]"
+
+c) **Refactor**: If the code can be deduplicated
    - Extract common patterns into functions/methods
    - Prioritize refactorings that make code significantly smaller and more maintainable
    - Implement the refactoring immediately
    - Log: "Refactored cluster X: [description] - saved ~N lines"
 
-c) **Skip**: If uncertain or the refactoring would hurt readability
-   - Log: "Skipping cluster X: [reason]"
+c) **Defer**: If uncertain
+   - Log: "Deferred cluster X: [reason]"
 
 ### 3. Apply Changes Automatically
 
 For each decision:
-- Update `.redunceignore` for ignored clusters
+- Skip clusters using `redunce --skip` for acceptable duplications
 - Implement refactorings for deduplicated code
 - Run tests after each significant change (if tests exist)
 - If tests fail, revert the change and log the failure
@@ -78,9 +91,9 @@ Be aggressive but smart:
 ## Iteration Check-in
 
 After each complete iteration (processing all clusters once), briefly report:
-- Clusters ignored (count + patterns added)
+- Clusters skipped (count)
 - Clusters refactored (count + lines saved)
-- Clusters skipped
+- Clusters deferred
 - Tests status
 
 Then continue to the next iteration automatically.
@@ -90,7 +103,7 @@ Then continue to the next iteration automatically.
 After 3-5 iterations, or when no more clusters appear, provide a summary:
 - Total clusters addressed
 - Total lines saved
-- Patterns added to `.redunceignore`
+- Clusters skipped
 - Test results
 - Ask: "Continue for another round?"
 
