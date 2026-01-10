@@ -1,8 +1,8 @@
 class Redunce < Formula
   desc "Find potentially redundant code using vector similarity"
   homepage "https://github.com/ZachSnow/redunce"
-  url "https://github.com/ZachSnow/redunce/archive/refs/tags/${VERSION}.tar.gz"
-  sha256 "${REDUNCE_SHA256}"
+  url "https://github.com/ZachSnow/redunce/archive/refs/tags/v0.1.0.tar.gz"
+  sha256 "0019dfc4b32d63c1392aa264aed2253c1e0c2fb09216f8e2cc269bbfb8bb49b5"
   license "MIT"
 
   depends_on "go" => :build
@@ -10,7 +10,7 @@ class Redunce < Formula
   # sqlite-vector extension for macOS
   resource "sqlite-vector-darwin" do
     url "https://github.com/sqliteai/sqlite-vector/releases/download/0.9.52/vector-apple-xcframework-0.9.52.zip"
-    sha256 "${SQLITE_VECTOR_SHA256}"
+    sha256 "7bcdc7b53474c3a4ce56d6d0720fa78a1fc1b836c0bbafbaa98593180ffba0d7"
   end
 
   def install
