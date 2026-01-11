@@ -7,3 +7,4 @@ redunce
 # SQLite vector extension binaries
 libvector.dylib
 libvector.so
+settings.local.json
