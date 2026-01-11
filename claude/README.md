@@ -1,14 +1,6 @@
 # Claude Code Commands for Redunce
 
-This directory contains custom Claude Code slash commands for the redunce tool.
-
-## Key Concepts
-
-Redunce has two distinct mechanisms for handling code:
-
-1. **Ignoring files** (via `.redunceignore`) - Prevents files from being analyzed at all. Use this for test files, generated code, or directories you don't want to scan.
-
-2. **Skipping clusters** (via `--skip`) - Marks a specific cluster of similar code as intentional/acceptable. The code is still analyzed, but the cluster won't be reported again.
+This directory contains custom Claude Code slash commands for the `redunce` tool.
 
 ## Available Commands
 
@@ -44,7 +36,7 @@ Automatically makes decisions and applies changes without asking for approval.
 **Workflow:**
 
 1. Automatically sets up `.redunceignore` for files to exclude
-2. Runs redunce iteratively
+2. Runs `redunce` iteratively
 3. Makes decisions automatically (skip vs refactor)
 4. Applies changes immediately
 5. Runs tests to verify changes (reverts if they fail)
