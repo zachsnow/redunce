@@ -6,8 +6,8 @@ import (
 	"os"
 	"sort"
 
-	"github.com/ZachSnow/redunce/internal/store"
-	"github.com/ZachSnow/redunce/internal/util"
+	"github.com/zachsnow/redunce/internal/store"
+	"github.com/zachsnow/redunce/internal/util"
 )
 
 const (

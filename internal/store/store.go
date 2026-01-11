@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/mattn/go-sqlite3"
-	"github.com/ZachSnow/redunce/internal/util"
+	"github.com/zachsnow/redunce/internal/util"
 )
 
 func init() {
@@ -23,11 +23,11 @@ func init() {
 				// Try to load the extension
 				// Note: SQLite adds platform extension (.dylib/.so) automatically
 				extensionPaths := []string{
-					"./libvector",                      // Current directory
-					"libvector",                        // System library paths
-					"/opt/homebrew/lib/libvector",      // Homebrew Apple Silicon
-					"/usr/local/lib/libvector",         // Homebrew Intel / Linux
-					"/usr/lib/libvector",               // Standard Linux path
+					"./libvector",                 // Current directory
+					"libvector",                   // System library paths
+					"/opt/homebrew/lib/libvector", // Homebrew Apple Silicon
+					"/usr/local/lib/libvector",    // Homebrew Intel / Linux
+					"/usr/lib/libvector",          // Standard Linux path
 				}
 
 				var lastErr error
@@ -58,7 +58,7 @@ type Chunk struct {
 	StartLine  int
 	EndLine    int
 	Code       string
-	SHA        string    // Git-style SHA of the chunk content
+	SHA        string // Git-style SHA of the chunk content
 	Embedding  []float64
 	Similarity float64 // Used for search results
 }

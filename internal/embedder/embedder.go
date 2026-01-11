@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ZachSnow/redunce/internal/store"
+	"github.com/zachsnow/redunce/internal/store"
 )
 
 // Embedder is an interface for embedding text

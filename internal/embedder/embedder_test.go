@@ -4,8 +4,8 @@ import (
 	"math"
 	"testing"
 
-	"github.com/ZachSnow/redunce/internal/store"
-	"github.com/ZachSnow/redunce/internal/util"
+	"github.com/zachsnow/redunce/internal/store"
+	"github.com/zachsnow/redunce/internal/util"
 )
 
 func TestPreprocessCode(t *testing.T) {
@@ -50,9 +50,9 @@ func TestTFIDFTokenize(t *testing.T) {
 	embedder := NewTFIDFEmbedder(nil, 100, 0.2, false)
 
 	tests := []struct {
-		name        string
-		input       string
-		shouldHave  []string
+		name          string
+		input         string
+		shouldHave    []string
 		shouldNotHave []string
 	}{
 		{

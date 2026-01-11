@@ -38,7 +38,7 @@ import (
 	"github.com/smacker/go-tree-sitter/yaml"
 	tree_sitter_json "github.com/tree-sitter/tree-sitter-json/bindings/go"
 
-	"github.com/ZachSnow/redunce/internal/store"
+	"github.com/zachsnow/redunce/internal/store"
 )
 
 // Language registry - smacker/go-tree-sitter provides built-in support for 30+ languages

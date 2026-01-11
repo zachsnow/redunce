@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/ZachSnow/redunce/internal/cluster"
-	"github.com/ZachSnow/redunce/internal/util"
+	"github.com/zachsnow/redunce/internal/cluster"
+	"github.com/zachsnow/redunce/internal/util"
 )
 
 // Formatter formats clusters for output

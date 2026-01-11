@@ -9,13 +9,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ZachSnow/redunce/internal/chunker"
-	"github.com/ZachSnow/redunce/internal/cluster"
-	"github.com/ZachSnow/redunce/internal/embedder"
-	"github.com/ZachSnow/redunce/internal/output"
-	"github.com/ZachSnow/redunce/internal/scanner"
-	"github.com/ZachSnow/redunce/internal/store"
-	"github.com/ZachSnow/redunce/internal/util"
+	"github.com/zachsnow/redunce/internal/chunker"
+	"github.com/zachsnow/redunce/internal/cluster"
+	"github.com/zachsnow/redunce/internal/embedder"
+	"github.com/zachsnow/redunce/internal/output"
+	"github.com/zachsnow/redunce/internal/scanner"
+	"github.com/zachsnow/redunce/internal/store"
+	"github.com/zachsnow/redunce/internal/util"
 )
 
 //go:embed claude/commands/*.md
@@ -71,28 +71,28 @@ func findClusterBySHAPrefix(clusters []*cluster.Cluster, prefix string) []*clust
 }
 
 type Config struct {
-	Threshold      float64
-	SkipThreshold  float64
-	EmbedMethod    string
-	Format         string
-	Score          string
-	LocalMinLines  int
-	LocalMaxLines  int
-	LocalStepLines int
-	TreesitterMin  int
-	TreesitterMax  int
-	OpenAIAPIKey   string
-	DBPath         string
-	Reset          bool
-	Query          string
-	SkipCluster    string
-	PrintIgnore    bool
-	PrintFiles        bool
-	PrintChunks       bool
-	PrintChunk        string
-	PrintCluster      string
-	MinChunkLength    int
-	Verbose           bool
+	Threshold              float64
+	SkipThreshold          float64
+	EmbedMethod            string
+	Format                 string
+	Score                  string
+	LocalMinLines          int
+	LocalMaxLines          int
+	LocalStepLines         int
+	TreesitterMin          int
+	TreesitterMax          int
+	OpenAIAPIKey           string
+	DBPath                 string
+	Reset                  bool
+	Query                  string
+	SkipCluster            string
+	PrintIgnore            bool
+	PrintFiles             bool
+	PrintChunks            bool
+	PrintChunk             string
+	PrintCluster           string
+	MinChunkLength         int
+	Verbose                bool
 	LocalRefreezeThreshold float64
 	LocalRefreeze          bool
 	Limit                  int
@@ -950,7 +950,7 @@ func installClaudeCommandsToDir(baseDir string) error {
 	fmt.Println("\nAvailable commands:")
 	fmt.Println("  /redunce         - Interactive mode with approval at each step")
 	fmt.Println("  /redunce-approve - Auto-approve mode for autonomous refactoring")
-	fmt.Println("\nFor more information, see: https://github.com/ZachSnow/redunce")
+	fmt.Println("\nFor more information, see: https://github.com/zachsnow/redunce")
 
 	return nil
 }

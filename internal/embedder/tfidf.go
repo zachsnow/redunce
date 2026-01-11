@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ZachSnow/redunce/internal/store"
+	"github.com/zachsnow/redunce/internal/store"
 )
 
 // TFIDFEmbedder uses TF-IDF for local embeddings

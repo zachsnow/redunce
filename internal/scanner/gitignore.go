@@ -1,7 +1,7 @@
 package scanner
 
 import (
-	"github.com/ZachSnow/redunce/internal/gitignore"
+	"github.com/zachsnow/redunce/internal/gitignore"
 )
 
 // NewIgnoreMatcher creates a gitignore matcher that checks both .redunceignore

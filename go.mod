@@ -1,4 +1,4 @@
-module github.com/ZachSnow/redunce
+module github.com/zachsnow/redunce
 
 go 1.22
 

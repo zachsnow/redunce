@@ -4,15 +4,15 @@ import (
 	"math"
 	"testing"
 
-	"github.com/ZachSnow/redunce/internal/store"
+	"github.com/zachsnow/redunce/internal/store"
 )
 
 func TestClusterTotalLines(t *testing.T) {
 	c := &Cluster{
 		Chunks: []*store.Chunk{
-			{StartLine: 1, EndLine: 10},   // 10 lines
-			{StartLine: 20, EndLine: 30},  // 11 lines
-			{StartLine: 50, EndLine: 55},  // 6 lines
+			{StartLine: 1, EndLine: 10},  // 10 lines
+			{StartLine: 20, EndLine: 30}, // 11 lines
+			{StartLine: 50, EndLine: 55}, // 6 lines
 		},
 	}
 
@@ -45,8 +45,8 @@ func TestComputeScore(t *testing.T) {
 	c := &Cluster{
 		CanonicalChunk: canonical,
 		Chunks: []*store.Chunk{
-			{StartLine: 1, EndLine: 20},   // 20 lines
-			{StartLine: 50, EndLine: 70},  // 21 lines
+			{StartLine: 1, EndLine: 20},    // 20 lines
+			{StartLine: 50, EndLine: 70},   // 21 lines
 			{StartLine: 100, EndLine: 115}, // 16 lines
 		},
 		AvgSimilarity: 0.9,
