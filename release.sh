@@ -69,4 +69,7 @@ awk -v r="$REDUNCE_SHA" -v v="$VECTOR_SHA" '
 (cd "$TAP_REPO" && git add Formula/redunce.rb && git commit -m "Update redunce to $TAG" && git push origin main)
 
 echo ""
-echo "Done! Create release: https://github.com/zachsnow/redunce/releases/new?tag=$TAG"
+echo "Done!"
+echo "  - Homebrew tap updated: $TAP_REPO"
+echo "  - Optionally create a release: https://github.com/zachsnow/redunce/releases/new?tag=$TAG"
+echo ""
