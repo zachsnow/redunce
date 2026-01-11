@@ -31,7 +31,7 @@ const (
 	MaxClusterIndex = 1000
 
 	// Version is the application version (source of truth for releases).
-	Version = "0.1.2"
+	Version = "0.1.3"
 
 	// SQLiteVectorVersion is the sqlite-vector extension version.
 	// Used by release.sh to download the correct version for Homebrew.
