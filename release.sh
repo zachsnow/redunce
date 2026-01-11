@@ -134,7 +134,7 @@ echo ""
 
 # Step 2: Calculate SHA256 of release tarball
 echo -e "${GREEN}Step 2: Calculating SHA256 of release tarball${NC}"
-TARBALL_URL="https://github.com/ZachSnow/redunce/archive/refs/tags/${TAG}.tar.gz"
+TARBALL_URL="https://github.com/zachsnow/redunce/archive/${TAG}.tar.gz"
 echo "URL: ${TARBALL_URL}"
 REDUNCE_SHA256=$(curl -sL "$TARBALL_URL" | shasum -a 256 | awk '{print $1}')
 
@@ -164,8 +164,8 @@ echo ""
 # Step 4: Update the formula in tap repo
 echo -e "${GREEN}Step 4: Updating Homebrew formula${NC}"
 
-# Update version in URL
-sed -i '' -E "s|refs/tags/v[0-9]+\.[0-9]+\.[0-9]+|refs/tags/${TAG}|" "$FORMULA_PATH"
+# Update version in URL (e.g., /archive/v0.1.0.tar.gz -> /archive/v0.1.1.tar.gz)
+sed -i '' -E "s|/archive/v[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz|/archive/${TAG}.tar.gz|" "$FORMULA_PATH"
 
 # Update redunce tarball sha256 (first sha256 after url line)
 sed -i '' -E "0,/sha256 \"[a-f0-9]{64}\"/s//sha256 \"${REDUNCE_SHA256}\"/" "$FORMULA_PATH"
