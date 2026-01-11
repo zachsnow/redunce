@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/ZachSnow/redunce/internal/chunker"
 	"github.com/ZachSnow/redunce/internal/cluster"
@@ -143,6 +144,15 @@ func main() {
 
 	// Get remaining arguments as files/directories
 	args := flag.Args()
+
+	// Check for common mistake: flags after paths (e.g., "redunce . --limit 3")
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "--") || (strings.HasPrefix(arg, "-") && len(arg) > 1 && arg[1] != '.') {
+			fmt.Fprintf(os.Stderr, "Error: '%s' looks like a flag but appears after paths.\n", arg)
+			fmt.Fprintf(os.Stderr, "Flags must come before paths: redunce [flags] <paths...>\n")
+			os.Exit(1)
+		}
+	}
 
 	// Handle install-claude-commands flag
 	if installClaudeCommands {
