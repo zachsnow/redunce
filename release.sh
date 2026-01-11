@@ -12,7 +12,8 @@ TAG="v$VERSION"
 
 # On failure: delete local tag, restore formula
 cleanup() {
-    [ $? -ne 0 ] || return
+    local code=$?
+    [ $code -ne 0 ] || return 0
     git tag -d "$TAG" 2>/dev/null
     (cd "$TAP_REPO" && git checkout -- Formula/redunce.rb 2>/dev/null)
 }
