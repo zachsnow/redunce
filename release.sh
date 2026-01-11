@@ -10,7 +10,11 @@ VERSION=$(grep 'Version = ' main.go | head -1 | sed 's/.*Version = "\(.*\)"/\1/'
 SQLITE_VERSION=$(grep 'SQLiteVectorVersion = ' main.go | sed 's/.*SQLiteVectorVersion = "\(.*\)"/\1/')
 TAG="v$VERSION"
 
-echo "Releasing $TAG (sqlite-vector $SQLITE_VERSION)"
+# On failure: delete local tag, restore formula
+cleanup() { [ $? -ne 0 ] && git tag -d "$TAG" 2>/dev/null; (cd "$TAP_REPO" && git checkout -- Formula/redunce.rb 2>/dev/null); }
+trap cleanup EXIT
+
+echo "Releasing $TAG (sqlite-vector $SQLITE_VERSION)..."
 
 # Preflight checks
 [ -z "$VERSION" ] && echo "Error: no Version in main.go" && exit 1
