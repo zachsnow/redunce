@@ -186,7 +186,7 @@ awk -v new_sha="${SQLITE_VECTOR_SHA256}" '
 FORMULA_MODIFIED=true
 
 # Verify updates
-if ! grep -q "refs/tags/${TAG}" "$FORMULA_PATH"; then
+if ! grep -q "/archive/${TAG}.tar.gz" "$FORMULA_PATH"; then
     echo -e "${RED}Error: Failed to update version in formula${NC}"
     exit 1
 fi
