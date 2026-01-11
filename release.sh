@@ -168,7 +168,13 @@ echo -e "${GREEN}Step 4: Updating Homebrew formula${NC}"
 sed -i '' -E "s|/archive/v[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz|/archive/${TAG}.tar.gz|" "$FORMULA_PATH"
 
 # Update redunce tarball sha256 (first sha256 after url line)
-sed -i '' -E "0,/sha256 \"[a-f0-9]{64}\"/s//sha256 \"${REDUNCE_SHA256}\"/" "$FORMULA_PATH"
+awk -v new_sha="${REDUNCE_SHA256}" '
+    !done && /sha256 "[a-f0-9]+"/ {
+        sub(/sha256 "[a-f0-9]+"/, "sha256 \"" new_sha "\"")
+        done = 1
+    }
+    { print }
+' "$FORMULA_PATH" > "${FORMULA_PATH}.tmp" && mv "${FORMULA_PATH}.tmp" "$FORMULA_PATH"
 
 # Update sqlite-vector version in URL
 sed -i '' -E "s|sqlite-vector/releases/download/[0-9]+\.[0-9]+\.[0-9]+/vector-apple-xcframework-[0-9]+\.[0-9]+\.[0-9]+\.zip|sqlite-vector/releases/download/${SQLITE_VECTOR_VERSION}/vector-apple-xcframework-${SQLITE_VECTOR_VERSION}.zip|" "$FORMULA_PATH"

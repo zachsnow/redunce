@@ -6,27 +6,44 @@
 The intention is that an agent like Claude will use this tool to refactor its work after making
 large-scale changes to a codebase.
 
-# Installation
+See [algorithm](./ALGORITHM.md) for information about the stupid algorithm.
+
+## Quick Start
+
+Install `redunce` and then add slash commands to `claude`.
+
+```bash
+brew tap zachsnow/redunce
+brew install redunce
+redunce --install-claude-commands
+```
+
+Then ask `claude` to use `redunce` to eliminate duplication in your codebase:
+
+```
+> /redunce-approve
+```
+
+## Installation
+
+Install via `homebrew`:
 
 ```bash
 brew tap zachsnow/redunce
 brew install redunce
 ```
 
-Or [build from source](#building).
+## Usage
 
-# Usage
-
-To use `redunce` simply pass it list of files and/or directories. It operates recursively over directories.
-If you don't pass any files or directories, it prints usage information.
+Pass `redunce` a list of files and/or directories (e.g. `.`):
 
 ```bash
-$ redunce <file-or-directory ...>
+$ redunce .
 ```
 
-Example output:
+It will analyze your codebase for redundancy and print what it finds. Example output:
 
-```
+```md
 # Cluster 1 (3 chunks, avg similarity: 0.91)
 
 **Canonical chunk** `a6adf109`
@@ -49,9 +66,9 @@ func validateInput(input string) error {
 2. `src/handlers/product.go:55-71` (similarity: 0.89)
 ```
 
-## Ignore Patterns
+### Ignore Patterns
 
-By default `redunce` ignores common files that shouldn't be analyzed, including those specified in `.gitignore`.
+`redunce` ignores common files that shouldn't be analyzed, including those specified in `.gitignore`.
 You can override or extend this behavior by creating `.redunceignore` files, which share a syntax and semantics
 with `.gitignore`, and have a higher precedence.
 
@@ -66,7 +83,7 @@ with `.gitignore`, and have a higher precedence.
 
 Use `--no-default-ignore` to skip default ignore patterns.
 
-## Skipping Clusters
+### Skipping Clusters
 
 When `redunce` reports a cluster of similar code, you have two options:
 
@@ -87,9 +104,9 @@ Skipped clusters are remembered and won't be reported again, even after refactor
 
 **Note:** "Ignoring" (via `.redunceignore`) prevents files from being analyzed at all, while "skipping" marks a specific cluster of similar code as acceptable.
 
-## Advanced Options
+### Advanced Options
 
-### Cluster Scoring
+#### Cluster Scoring
 
 Control how clusters are ranked with `--score`:
 
@@ -101,9 +118,10 @@ Control how clusters are ranked with `--score`:
 redunce --score impact .
 ```
 
-### TF-IDF Vocabulary Management
+#### TF-IDF Vocabulary Management
 
-When using local embeddings (`--embed local`, the default), redunce builds a TF-IDF vocabulary from your codebase. As your codebase grows, you may need to rebuild this vocabulary:
+When using local embeddings (`--embed local`, the default), `redunce` builds a TF-IDF vocabulary
+from your codebase. As your codebase changes, you may need to rebuild this vocabulary:
 
 - `--refreeze-threshold 0.20` - Automatically rebuild vocabulary when new chunks exceed this fraction of the corpus (default: 0.20 = 20%)
 - `--refreeze` - Manually trigger a vocabulary rebuild and re-embed all chunks
@@ -116,9 +134,9 @@ redunce --refreeze .
 redunce --refreeze-threshold 0.10 .
 ```
 
-## Claude Code Integration
+### Claude Code Integration
 
-`redunce` includes built-in slash commands for [Claude Code](https://claude.ai/claude-code), making it easy to systematically eliminate code duplication using an AI-assisted workflow.
+`redunce` includes slash commands for [Claude Code](https://claude.ai/claude-code), making it easy to systematically eliminate code duplication using an AI-assisted workflow.
 
 After installing `redunce`, run:
 
@@ -135,27 +153,16 @@ This installs two slash commands:
 - `/redunce` - Interactive mode with approval at each step
 - `/redunce-approve` - Auto-approve mode for autonomous refactoring
 
-In any project, simply type `/redunce` or `/redunce-approve` in Claude Code, and Claude will:
+See [`claude/README.md`](./claude/README.md) for details.
 
-1. **Set up `.redunceignore`** - Automatically identify and add file patterns for test files, generated code, etc.
-2. **Run iterative analysis** - Execute `redunce . -limit 10` to find duplication clusters
-3. **Evaluate clusters** - For each cluster, decide whether to:
-   - **Skip** (`--skip`) - Mark the cluster as acceptable (similar code that shouldn't be refactored)
-   - **Refactor** - Extract common code to eliminate duplication
-4. **Apply changes** - In approve mode, changes are automatic; in interactive mode, Claude asks for approval
-5. **Repeat** - Continue for 3-5 iterations or until no progress is made
-6. **Check in** - Ask if you want to continue
+## Building
 
-For more details, see `claude/README.md` in this repository.
-
-# Building
-
-## Prerequisites
+### Prerequisites
 
 - Go 1.22 or later
 - [sqlite-vector](https://github.com/sqliteai/sqlite-vector) extension (required for vector similarity search)
 
-## Setup sqlite-vector extension
+### Setup sqlite-vector extension
 
 `redunce` requires the sqlite-vector extension to be available at runtime. You can download the pre-built binary:
 
@@ -178,7 +185,7 @@ codesign -s - libvector.dylib
 
 3. Place `libvector.dylib` (or `libvector.so` on Linux) in the project root directory
 
-## Build the binary
+### Build the binary
 
 Once the extension is in place, build `redunce`:
 
@@ -197,7 +204,7 @@ sudo mv libvector.dylib /usr/local/lib/   # or libvector.so on Linux
 
 The extension is searched for in: `./libvector`, `/opt/homebrew/lib/libvector`, `/usr/local/lib/libvector`, `/usr/lib/libvector`.
 
-## Cleaning
+### Cleaning
 
 Clean build artifacts with:
 
@@ -205,6 +212,3 @@ Clean build artifacts with:
 $ ./clean.sh
 ```
 
-# Algorithm
-
-See [algorithm](ALGORITHM.md) for information about the stupid algorithm.
