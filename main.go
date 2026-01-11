@@ -146,11 +146,15 @@ func main() {
 	args := flag.Args()
 
 	// Check for common mistake: flags after paths (e.g., "redunce . --limit 3")
+	// Only error if the path doesn't exist - a real dir named "--something" would pass
 	for _, arg := range args {
-		if strings.HasPrefix(arg, "--") || (strings.HasPrefix(arg, "-") && len(arg) > 1 && arg[1] != '.') {
-			fmt.Fprintf(os.Stderr, "Error: '%s' looks like a flag but appears after paths.\n", arg)
-			fmt.Fprintf(os.Stderr, "Flags must come before paths: redunce [flags] <paths...>\n")
-			os.Exit(1)
+		looksLikeFlag := strings.HasPrefix(arg, "--") || (strings.HasPrefix(arg, "-") && len(arg) > 1 && arg[1] != '.')
+		if looksLikeFlag {
+			if _, err := os.Stat(arg); os.IsNotExist(err) {
+				fmt.Fprintf(os.Stderr, "Error: '%s' looks like a flag. Flags must come before paths.\n", arg)
+				fmt.Fprintf(os.Stderr, "Usage: redunce [flags] <paths...>\n")
+				os.Exit(1)
+			}
 		}
 	}
 
