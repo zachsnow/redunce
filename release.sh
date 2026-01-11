@@ -212,17 +212,15 @@ echo -e "${GREEN}Step 5: Committing formula to tap repo${NC}"
 )
 echo ""
 
-# Step 6: Test the formula (optional)
-echo -e "${GREEN}Step 6: Testing formula${NC}"
-echo -e "${YELLOW}Test installation? (y/N)${NC}"
-read -r response
-if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+# Step 6: Test the formula (optional, pass --test flag)
+if [[ "$1" == "--test" ]]; then
+    echo -e "${GREEN}Step 6: Testing formula${NC}"
     brew install --build-from-source "$FORMULA_PATH"
     echo ""
     echo -e "${GREEN}Installation successful!${NC}"
     redunce --version
 else
-    echo "Skipping installation test"
+    echo -e "${YELLOW}Skipping installation test (pass --test to enable)${NC}"
 fi
 
 echo ""
