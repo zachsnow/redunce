@@ -6,9 +6,8 @@ set -e
 # 1. Tags the current commit and pushes to origin
 # 2. Calculates SHA256 of the release tarball
 # 3. Calculates SHA256 of sqlite-vector
-# 4. Updates the Homebrew formula
-# 5. Commits the updated formula
-# 6. Tests the formula by building from source
+# 4. Updates the Homebrew formula in the tap repo
+# 5. Commits and pushes the updated formula
 
 # Colors for output
 RED='\033[0;31m'
@@ -16,13 +15,15 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# Configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TAP_REPO="${SCRIPT_DIR}/../homebrew-redunce"
+FORMULA_PATH="${TAP_REPO}/Formula/redunce.rb"
+
 # State tracking for cleanup
-FORMULA_PATH="Formula/redunce.rb"
-BACKUP_PATH="${FORMULA_PATH}.bak"
 TAG_CREATED=false
 TAG_PUSHED=false
 FORMULA_MODIFIED=false
-FORMULA_COMMITTED=false
 
 # Cleanup function
 cleanup() {
@@ -32,47 +33,48 @@ cleanup() {
         echo ""
         echo -e "${YELLOW}Cleaning up after error...${NC}"
 
-        # Restore formula backup if it exists
-        if [ -f "$BACKUP_PATH" ]; then
-            echo "Restoring ${FORMULA_PATH} from backup"
-            mv "$BACKUP_PATH" "$FORMULA_PATH"
-        fi
-
-        # Remove local tag if created but not fully committed
-        if [ "$TAG_CREATED" = true ] && [ "$FORMULA_COMMITTED" = false ]; then
+        # Remove local tag if created but release not completed
+        if [ "$TAG_CREATED" = true ]; then
             echo "Removing local tag ${TAG}"
             git tag -d "$TAG" 2>/dev/null || true
 
-            # If we pushed the tag but didn't finish, warn the user
             if [ "$TAG_PUSHED" = true ]; then
-                echo -e "${YELLOW}Warning: Tag ${TAG} was pushed to origin but release was not completed${NC}"
+                echo -e "${YELLOW}Warning: Tag ${TAG} was pushed to origin${NC}"
                 echo "You may want to delete the remote tag:"
                 echo "  git push origin :refs/tags/${TAG}"
             fi
         fi
 
-        # Restore any git changes to the formula
-        if [ "$FORMULA_MODIFIED" = true ] && [ "$FORMULA_COMMITTED" = false ]; then
-            echo "Restoring ${FORMULA_PATH} in git"
-            git checkout -- "$FORMULA_PATH" 2>/dev/null || true
+        # Restore formula changes in tap repo
+        if [ "$FORMULA_MODIFIED" = true ]; then
+            echo "Restoring formula in tap repo"
+            (cd "$TAP_REPO" && git checkout -- Formula/redunce.rb 2>/dev/null || true)
         fi
 
         echo -e "${RED}Release failed - cleanup complete${NC}"
-    else
-        # Success - just remove backup if it exists
-        rm -f "$BACKUP_PATH" 2>/dev/null || true
     fi
 }
 
-# Set up trap to call cleanup on exit, error, or interrupt
 trap cleanup EXIT INT TERM
 
-# Extract version from main.go
+# Verify tap repo exists
+if [ ! -d "$TAP_REPO" ]; then
+    echo -e "${RED}Error: Tap repo not found at ${TAP_REPO}${NC}"
+    echo "Clone it with: git clone git@github.com:zachsnow/homebrew-redunce.git ../homebrew-redunce"
+    exit 1
+fi
+
+if [ ! -f "$FORMULA_PATH" ]; then
+    echo -e "${RED}Error: Formula not found at ${FORMULA_PATH}${NC}"
+    exit 1
+fi
+
+# Extract versions from main.go
 VERSION=$(grep 'Version = ' main.go | head -1 | sed 's/.*Version = "\(.*\)"/\1/')
 SQLITE_VECTOR_VERSION=$(grep 'SQLiteVectorVersion = ' main.go | sed 's/.*SQLiteVectorVersion = "\(.*\)"/\1/')
 
 if [ -z "$VERSION" ]; then
-    echo -e "${RED}Error: Could not extract version from main.go${NC}"
+    echo -e "${RED}Error: Could not extract Version from main.go${NC}"
     exit 1
 fi
 
@@ -87,6 +89,7 @@ echo -e "${GREEN}=== Redunce Release ===${NC}"
 echo -e "Version: ${YELLOW}${VERSION}${NC}"
 echo -e "Tag: ${YELLOW}${TAG}${NC}"
 echo -e "SQLite-Vector: ${YELLOW}${SQLITE_VECTOR_VERSION}${NC}"
+echo -e "Tap repo: ${YELLOW}${TAP_REPO}${NC}"
 echo ""
 
 # Check if working directory is clean
@@ -94,6 +97,13 @@ if [ -n "$(git status --porcelain)" ]; then
     echo -e "${YELLOW}Warning: Working directory has uncommitted changes${NC}"
     echo "Please commit or stash your changes before releasing"
     git status --short
+    exit 1
+fi
+
+# Check if tap repo is clean
+if [ -n "$(cd "$TAP_REPO" && git status --porcelain)" ]; then
+    echo -e "${YELLOW}Warning: Tap repo has uncommitted changes${NC}"
+    (cd "$TAP_REPO" && git status --short)
     exit 1
 fi
 
@@ -126,11 +136,11 @@ echo ""
 echo -e "${GREEN}Step 2: Calculating SHA256 of release tarball${NC}"
 TARBALL_URL="https://github.com/ZachSnow/redunce/archive/refs/tags/${TAG}.tar.gz"
 echo "URL: ${TARBALL_URL}"
-REDUNCE_SHA256=$(curl -L "$TARBALL_URL" 2>/dev/null | shasum -a 256 | awk '{print $1}')
+REDUNCE_SHA256=$(curl -sL "$TARBALL_URL" | shasum -a 256 | awk '{print $1}')
 
-if [ -z "$REDUNCE_SHA256" ]; then
-    echo -e "${RED}Error: Failed to calculate SHA256 for release tarball${NC}"
-    echo "The tag may not be available on GitHub yet. Try running this script again in a few moments."
+if [ -z "$REDUNCE_SHA256" ] || [ "$REDUNCE_SHA256" = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ]; then
+    echo -e "${RED}Error: Failed to download release tarball${NC}"
+    echo "The tag may not be available on GitHub yet."
     exit 1
 fi
 
@@ -141,7 +151,7 @@ echo ""
 echo -e "${GREEN}Step 3: Calculating SHA256 of sqlite-vector${NC}"
 SQLITE_VECTOR_URL="https://github.com/sqliteai/sqlite-vector/releases/download/${SQLITE_VECTOR_VERSION}/vector-apple-xcframework-${SQLITE_VECTOR_VERSION}.zip"
 echo "URL: ${SQLITE_VECTOR_URL}"
-SQLITE_VECTOR_SHA256=$(curl -L "$SQLITE_VECTOR_URL" 2>/dev/null | shasum -a 256 | awk '{print $1}')
+SQLITE_VECTOR_SHA256=$(curl -sL "$SQLITE_VECTOR_URL" | shasum -a 256 | awk '{print $1}')
 
 if [ -z "$SQLITE_VECTOR_SHA256" ]; then
     echo -e "${RED}Error: Failed to calculate SHA256 for sqlite-vector${NC}"
@@ -151,23 +161,16 @@ fi
 echo -e "SHA256: ${YELLOW}${SQLITE_VECTOR_SHA256}${NC}"
 echo ""
 
-# Step 4: Update the formula
+# Step 4: Update the formula in tap repo
 echo -e "${GREEN}Step 4: Updating Homebrew formula${NC}"
-if [ ! -f "$FORMULA_PATH" ]; then
-    echo -e "${RED}Error: ${FORMULA_PATH} not found${NC}"
-    exit 1
-fi
 
-# Create a backup
-cp "$FORMULA_PATH" "${BACKUP_PATH}"
-
-# Update version in URL (e.g., v0.1.0 -> v0.1.1)
+# Update version in URL
 sed -i '' -E "s|refs/tags/v[0-9]+\.[0-9]+\.[0-9]+|refs/tags/${TAG}|" "$FORMULA_PATH"
 
 # Update redunce tarball sha256 (first sha256 after url line)
 sed -i '' -E "0,/sha256 \"[a-f0-9]{64}\"/s//sha256 \"${REDUNCE_SHA256}\"/" "$FORMULA_PATH"
 
-# Update sqlite-vector version in URL (e.g., 0.9.52 -> 0.9.53)
+# Update sqlite-vector version in URL
 sed -i '' -E "s|sqlite-vector/releases/download/[0-9]+\.[0-9]+\.[0-9]+/vector-apple-xcframework-[0-9]+\.[0-9]+\.[0-9]+\.zip|sqlite-vector/releases/download/${SQLITE_VECTOR_VERSION}/vector-apple-xcframework-${SQLITE_VECTOR_VERSION}.zip|" "$FORMULA_PATH"
 
 # Update sqlite-vector sha256 (inside the resource block)
@@ -184,42 +187,39 @@ FORMULA_MODIFIED=true
 
 # Verify updates
 if ! grep -q "refs/tags/${TAG}" "$FORMULA_PATH"; then
-    echo -e "${RED}Error: Failed to update version in ${FORMULA_PATH}${NC}"
-    mv "${BACKUP_PATH}" "$FORMULA_PATH"
-    FORMULA_MODIFIED=false
+    echo -e "${RED}Error: Failed to update version in formula${NC}"
     exit 1
 fi
 
 if ! grep -q "sha256 \"${REDUNCE_SHA256}\"" "$FORMULA_PATH"; then
-    echo -e "${RED}Error: Failed to update redunce SHA256 in ${FORMULA_PATH}${NC}"
-    mv "${BACKUP_PATH}" "$FORMULA_PATH"
-    FORMULA_MODIFIED=false
+    echo -e "${RED}Error: Failed to update redunce SHA256 in formula${NC}"
     exit 1
 fi
 
-echo "Updated ${FORMULA_PATH}:"
+echo "Updated formula:"
 echo "  - Version: ${TAG}"
 echo "  - Redunce SHA256: ${REDUNCE_SHA256:0:16}..."
 echo "  - SQLite-Vector SHA256: ${SQLITE_VECTOR_SHA256:0:16}..."
 echo ""
 
-# Step 5: Commit the updated formula
-echo -e "${GREEN}Step 5: Committing updated formula${NC}"
-git add Formula/redunce.rb
-git commit -m "Update Homebrew formula for ${TAG}"
-git push origin main
-FORMULA_COMMITTED=true
+# Step 5: Commit and push formula
+echo -e "${GREEN}Step 5: Committing formula to tap repo${NC}"
+(
+    cd "$TAP_REPO"
+    git add Formula/redunce.rb
+    git commit -m "Update redunce to ${TAG}"
+    git push origin main
+)
 echo ""
 
-# Step 6: Test the formula
-echo -e "${GREEN}Step 6: Testing formula by building from source${NC}"
-echo -e "${YELLOW}This will install redunce using Homebrew. Continue? (y/N)${NC}"
+# Step 6: Test the formula (optional)
+echo -e "${GREEN}Step 6: Testing formula${NC}"
+echo -e "${YELLOW}Test installation? (y/N)${NC}"
 read -r response
 if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
-    brew install --build-from-source ./Formula/redunce.rb
+    brew install --build-from-source "$FORMULA_PATH"
     echo ""
-    echo -e "${GREEN}=== Installation successful! ===${NC}"
-    echo "Testing installed binary:"
+    echo -e "${GREEN}Installation successful!${NC}"
     redunce --version
 else
     echo "Skipping installation test"
@@ -227,9 +227,10 @@ fi
 
 echo ""
 echo -e "${GREEN}=== Release complete! ===${NC}"
-echo "Next steps:"
-echo "  1. Create a GitHub release at: https://github.com/zachsnow/redunce/releases/new?tag=${TAG}"
 echo ""
-echo "Users can now install redunce with:"
-echo "  brew tap zachsnow/redunce https://github.com/zachsnow/redunce"
+echo "Next steps:"
+echo "  1. Create GitHub release: https://github.com/zachsnow/redunce/releases/new?tag=${TAG}"
+echo ""
+echo "Users install with:"
+echo "  brew tap zachsnow/redunce"
 echo "  brew install redunce"

@@ -9,7 +9,7 @@ large-scale changes to a codebase.
 # Installation
 
 ```bash
-brew tap zachsnow/redunce https://github.com/zachsnow/redunce
+brew tap zachsnow/redunce
 brew install redunce
 ```
 
