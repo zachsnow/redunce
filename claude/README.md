@@ -10,14 +10,14 @@ Guides you through an iterative code deduplication workflow with approval at eac
 
 **Use when:**
 
-- You're new to redunce
+- You're new to `redunce`
 - You want to review each decision
 - You're working on critical code
 
 **Workflow:**
 
 1. Sets up `.redunceignore` with appropriate file patterns
-2. Runs redunce to find duplication clusters
+2. Runs `redunce` to find duplication clusters
 3. Proposes either skipping or refactoring each cluster
 4. Waits for your approval before applying changes
 5. Repeats 3-5 times or until no progress
@@ -37,7 +37,7 @@ Automatically makes decisions and applies changes without asking for approval.
 
 1. Automatically sets up `.redunceignore` for files to exclude
 2. Runs `redunce` iteratively
-3. Makes decisions automatically (skip vs refactor)
+3. Makes decisions automatically (ignore vs skip vs refactor)
 4. Applies changes immediately
 5. Runs tests to verify changes (reverts if they fail)
 6. Reports progress between iterations

@@ -1,19 +1,15 @@
 # Redunce Auto-Approve Mode
 
-You are going to help the user reduce code duplication using the redunce tool in AUTO-APPROVE mode.
-
-## Key Concepts
-
-There are two distinct mechanisms:
-
-1. **Ignoring files** (`.redunceignore`) - Excludes entire files/directories from analysis
-2. **Skipping clusters** (`--skip`) - Marks a specific duplication cluster as acceptable
+You are going to help the user reduce code duplication using the `redunce` tool in **auto-approve** mode.
 
 ## Overview
 
-This is the automatic mode of redunce. You will make decisions about skipping or refactoring duplication clusters WITHOUT asking for approval at each step. Only check in with the user between major iterations.
+`redunce` is a code duplication detection tool that clusters similar code blocks.
 
-Redunce is a code duplication detection tool that clusters similar code blocks. Your job is to iteratively:
+This is the automatic mode of `redunce`. You will make decisions about skipping or refactoring
+duplication clusters WITHOUT asking for approval at each step. Only check in with the user
+between major iterations. Your job is to iteratively:
+
 1. Configure `.redunceignore` to exclude files that shouldn't be analyzed
 2. Find duplication clusters
 3. Automatically decide whether to skip or refactor
@@ -26,6 +22,7 @@ First, check if a `.redunceignore` file exists. If not, create one with sensible
 structure.
 
 Then evaluate whether any additional file patterns should be added to `.redunceignore`. Consider:
+
 - Test files that intentionally have duplicated setup/teardown code
 - Generated code
 - Vendor/third-party code
@@ -38,7 +35,7 @@ Then evaluate whether any additional file patterns should be added to `.reduncei
 
 Repeat the following steps 3-5 times, or until no further progress is possible:
 
-### 1. Run Redunce
+### 1. Run `redunce`
 
 Run: `redunce . --limit 10`
 
@@ -70,14 +67,14 @@ c) **Defer**: If uncertain
 ### 3. Apply Changes Automatically
 
 For each decision:
-- Skip clusters using `redunce --skip` for acceptable duplications
-- Implement refactorings for deduplicated code
+- Add files to `.redunceignore`, skip using `redunce --skip`, implement refactorings for deduplicated code
+- Check types and fix type errors (if possible)
 - Run tests after each significant change (if tests exist)
 - If tests fail, revert the change and log the failure
 
 ### 4. Re-run and Continue
 
-After processing clusters from one run, re-run redunce to see the new state and continue.
+After processing clusters from one run, re-run `redunce` to see the new state and continue.
 
 ## Decision Guidelines
 
@@ -91,6 +88,7 @@ Be aggressive but smart:
 ## Iteration Check-in
 
 After each complete iteration (processing all clusters once), briefly report:
+- Files added to `.redunceignore`
 - Clusters skipped (count)
 - Clusters refactored (count + lines saved)
 - Clusters deferred
@@ -100,7 +98,7 @@ Then continue to the next iteration automatically.
 
 ## Completion
 
-After 3-5 iterations, or when no more clusters appear, provide a summary:
+After 3-5 iterations, or when no more significant clusters appear, provide a summary:
 - Total clusters addressed
 - Total lines saved
 - Clusters skipped

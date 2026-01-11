@@ -11,7 +11,7 @@ There are two distinct mechanisms:
 
 ## Overview
 
-Redunce is a code duplication detection tool that clusters similar code blocks. Your job is to iteratively:
+`redunce` is a code duplication detection tool that clusters similar code blocks. Your job is to iteratively:
 
 1. Configure `.redunceignore` to exclude files that shouldn't be analyzed
 2. Find duplication clusters
@@ -86,7 +86,7 @@ Wait for user approval, then apply the changes:
 
 ### 5. Check Progress
 
-After applying changes, re-run redunce to see the new state.
+After applying changes, re-run `redunce` to see the new state.
 
 ## Completion
 
