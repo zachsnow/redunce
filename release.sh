@@ -26,7 +26,15 @@ echo "Releasing $TAG (sqlite-vector $SQLITE_VERSION)..."
 [ -z "$SQLITE_VERSION" ] && echo "Error: no SQLiteVectorVersion in main.go" && exit 1
 [ ! -f "$FORMULA" ] && echo "Error: formula not found at $FORMULA" && exit 1
 [ -n "$(git status --porcelain)" ] && echo "Error: uncommitted changes" && exit 1
-git rev-parse "$TAG" >/dev/null 2>&1 && echo "Error: tag $TAG exists" && exit 1
+
+# Handle --force: delete existing tag
+if [[ "$1" == "--force" ]] && git rev-parse "$TAG" >/dev/null 2>&1; then
+    echo "Deleting existing tag $TAG..."
+    git tag -d "$TAG"
+    git push origin ":refs/tags/$TAG"
+fi
+
+git rev-parse "$TAG" >/dev/null 2>&1 && echo "Error: tag $TAG exists (use --force)" && exit 1
 
 # Create and push tag
 git tag "$TAG" && git push origin "$TAG"
